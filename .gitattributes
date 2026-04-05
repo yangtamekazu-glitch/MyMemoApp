@@ -1,0 +1,10 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+# 巨大な依存パッケージ
+node_modules/
+.expo/
+
+# Androidのビルド生成物とAPKファイル
+android/app/build/
+android/.gradle/
+*.apk
