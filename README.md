@@ -1,50 +1,69 @@
-# Welcome to your Expo app 👋
+📝 MyMemoApp - 直感的に整理できるマルチプラットフォーム対応メモアプリ
+MyMemoApp は、アイデアや日常の記録を直感的に整理できるメモアプリです。React Native (Expo) をベースに開発され、Android/iOSのスマートフォンアプリとしてだけでなく、Electronを活用した独立したWindowsデスクトップアプリ（.exe）としても快適に動作するクロスプラットフォーム設計が最大の特徴です。
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+✨ 主な機能
+📁 階層的なフォルダ管理: フォルダを作成し、メモを美しく整理。フォルダごとの専用アイコン（写真）や名前のカスタマイズ機能も搭載。
 
-## Get started
+🖐️ 直感的なドラッグ＆ドロップ: メモやフォルダを長押しするだけで、指先一つで自由自在に並び替えが可能。
 
-1. Install dependencies
+📎 リッチなファイル添付: テキストだけでなく、画像（正方形トリミング対応）や各種ドキュメントファイルの添付・閲覧・共有に対応。
 
-   ```bash
-   npm install
-   ```
+☑️ 一括操作モード: 画面右上のメニューから選択モードに入り、複数のメモやフォルダを一気に削除できるプロフェッショナル仕様。
 
-2. Start the app
+💻 究極のクロスプラットフォーム: スマホアプリとしての動作はもちろん、Electronによる完全なWindowsネイティブアプリ（インストーラー付き）としても配布・実行が可能。
 
-   ```bash
-   npx expo start
-   ```
+🛠 技術スタック
+言語: TypeScript, JavaScript
 
-In the output, you'll find options to open the app in a
+UIフレームワーク: React Native (Expo / Expo Router)
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+デスクトップ化: Electron, electron-builder, electron-serve
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+ローカルストレージ: AsyncStorage (@react-native-async-storage/async-storage)
 
-## Get a fresh project
+ジェスチャー＆アニメーション: react-native-gesture-handler, react-native-draggable-flatlist
 
-When you're ready, run:
+デバイス機能アクセス: expo-image-picker (カメラロール), expo-document-picker (ファイル), expo-sharing (共有)
 
-```bash
-npm run reset-project
-```
+🚀 セットアップ方法
+1. 依存関係のインストール
+プロジェクトのルートディレクトリで以下のコマンドを実行し、必要なパッケージをインストールします。
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Bash
+npm install
+2. スマホアプリ（開発モード）としての起動
+Expoを使用して、実機やエミュレータでアプリを起動します。
 
-## Learn more
+Bash
+npx expo start
+※ 起動後、ターミナルのQRコードをExpo Goアプリで読み取るか、aキーでAndroidエミュレータを起動します。
 
-To learn more about developing your project with Expo, look at the following resources:
+3. Windowsアプリ（.exe）のビルド
+Electronを使用して、Windows用のインストーラーを生成します。
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Bash
+# 1. まずは静的ファイルとしてエクスポート
+npx expo export
 
-## Join the community
+# 2. Windows用インストーラーの作成（※管理者権限で実行）
+npx electron-builder --win
+※ ビルド完了後、release-windows フォルダ内に MyMemoApp Setup 1.0.0.exe が生成されます。
 
-Join our community of developers creating universal apps.
+📸 画面の構成
+アプリは「使いやすさ」と「誤操作防止」を両立したUI設計を採用しています：
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+ヘッダー: 現在の階層（フォルダ名）を表示し、スムーズな「戻る」操作や、一括削除のための「選択モード」切り替えを提供。
+
+メインリスト: フォルダとメモが混在するリスト画面。通常時は右端のドラッグハンドルで並び替え、編集モード時はワンタップでアイコン変更が可能。
+
+フローティングアクションボタン（FAB）: 画面右下の「＋」ボタンから、いつでも瞬時に新しいフォルダやメモを追加可能（選択モード中は自動的に非表示になります）。
+
+📝 ライセンス
+このプロジェクトは学習および個人利用の目的で作成されました。
+
+💡 補足説明（開発者向け）
+このプロジェクトは、単一のコードベースから「モバイルアプリ」と「デスクトップアプリ」の両方を構築するモダンな開発フローの実証を目的としています。
+
+クロスプラットフォームの実現: ExpoのWeb出力機能を活用し、生成された静的ファイルをElectronの殻（BrowserWindow）で包み込むことで、コードを一切書き換えることなくWindowsアプリ化（NSISインストーラー）を実現しています。
+
+UXへのこだわり: 誤ってメモを削除しないよう各アイテムのゴミ箱ボタンを撤去し、iOS標準の「写真アプリ」のような「選択モードからの複数一括削除」を採用することで、プロ品質のユーザー体験を提供しています。
