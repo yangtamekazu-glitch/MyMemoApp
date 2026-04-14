@@ -1,15 +1,16 @@
 {
   "expo": {
     "name": "MyMemoApp",
-    "slug": "MyMemoApp",
-    "version": "1.0.0",
+    "slug": "mymemoapp",
+    "version": "1.1.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mymemoapp",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.mymemoapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,10 +21,10 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.MyMemoApp"
+      "package": "com.anonymous.mymemoapp"
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [

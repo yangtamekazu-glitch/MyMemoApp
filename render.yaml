@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: MyMemoApp
+    env: static
+    buildCommand: npm install && npm run build:web
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

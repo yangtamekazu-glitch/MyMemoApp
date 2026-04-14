@@ -1,11 +1,42 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Slider from '@react-native-community/slider';
+import { supabase } from '../../utils/supabase';
+
+const mapToDB = (item: Item, userId: string) => ({
+  id: item.id,
+  user_id: userId,
+  parent_id: item.parentId,
+  type: item.type,
+  title: item.title,
+  text: item.text,
+  image_uri: item.imageUri,
+  image_width: item.imageWidth,
+  image_height: item.imageHeight,
+  folder_icon_uri: item.folderIconUri,
+  file_uri: item.fileUri,
+  file_name: item.fileName,
+});
+
+const mapFromDB = (row: any): Item => ({
+  id: row.id,
+  parentId: row.parent_id,
+  type: row.type as 'folder' | 'note',
+  title: row.title || '',
+  text: row.text || '',
+  imageUri: row.image_uri,
+  imageWidth: row.image_width,
+  imageHeight: row.image_height,
+  folderIconUri: row.folder_icon_uri,
+  fileUri: row.file_uri,
+  fileName: row.file_name,
+});
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -19,7 +50,7 @@ interface Item {
   imageUri: string | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
-  folderIconUri?: string | null; // 🌟 フォルダ専用のアイコン画像を保存する場所を追加！
+  folderIconUri?: string | null;
   fileUri: string | null;
   fileName: string | null;
 }
@@ -42,6 +73,22 @@ const GOOGLE_COLORS = {
 };
 
 export default function MemoApp() {
+  const uploadToStorage = async (uri: string, folder: string) => {
+    try {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const ext = uri.split('.').pop() || 'png';
+      const path = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+      const { error } = await supabase.storage.from('memo-assets').upload(path, blob);
+      if (error) throw error;
+      const { data } = supabase.storage.from('memo-assets').getPublicUrl(path);
+      return data.publicUrl;
+    } catch (e) {
+      console.error('Upload Error:', e);
+      return uri; // fallback to local uri
+    }
+  };
+
   const [items, setItems] = useState<Item[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
@@ -50,22 +97,64 @@ export default function MemoApp() {
 
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  // 🌟 現在「名前・アイコン」を編集中のフォルダを記憶するスイッチ
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+
+  const [dragDelaySec, setDragDelaySec] = useState(0.5);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // 🌟 追加：移動モードを管理するための状態
+  const [isMoving, setIsMoving] = useState(false);
+  const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
 
   useEffect(() => {
     const loadData = async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setIsLoaded(true);
+          return;
+        }
+
+        const { data: dbData, error } = await supabase.from('memos').select('*').eq('user_id', user.id);
+        if (error) throw error;
+
+        let loadedItems: Item[] = [];
+        if (dbData && dbData.length > 0) {
+          loadedItems = dbData.map(mapFromDB);
+        }
+
         const savedData = await AsyncStorage.getItem('my_memo_data');
         if (savedData) {
-          const parsed = JSON.parse(savedData);
-          setItems(parsed);
-        } else {
-          setItems([
+          const parsed: Item[] = JSON.parse(savedData);
+          const migratedFlag = await AsyncStorage.getItem('my_memo_data_migrated');
+          if (!migratedFlag && parsed.length > 0) {
+            const upsertData = parsed.map(item => mapToDB(item, user.id));
+            const { error: upsertError } = await supabase.from('memos').upsert(upsertData);
+            if (!upsertError) {
+              await AsyncStorage.setItem('my_memo_data_migrated', 'true');
+              const existingIds = new Set(loadedItems.map(i => i.id));
+              const missingLocals = parsed.filter(i => !existingIds.has(i.id));
+              loadedItems = [...loadedItems, ...missingLocals];
+            }
+          }
+        }
+
+        if (loadedItems.length === 0) {
+          loadedItems = [
             { id: '1', parentId: null, type: 'folder', title: '無名１', text: '', imageUri: null, fileUri: null, fileName: null },
             { id: '2', parentId: null, type: 'folder', title: '無名２', text: '', imageUri: null, fileUri: null, fileName: null },
-          ]);
+          ];
+          const defaultData = loadedItems.map(item => mapToDB(item, user.id));
+          await supabase.from('memos').upsert(defaultData);
         }
+
+        setItems(loadedItems);
+
+        const savedDelay = await AsyncStorage.getItem('dragDelaySec');
+        if (savedDelay !== null) {
+          setDragDelaySec(parseFloat(savedDelay));
+        }
+
       } catch (error) {
         console.error("読み込みエラー", error);
       } finally {
@@ -76,10 +165,21 @@ export default function MemoApp() {
   }, []);
 
   useEffect(() => {
-    if (isLoaded) {
-      AsyncStorage.setItem('my_memo_data', JSON.stringify(items));
-    }
+    if (!isLoaded || items.length === 0) return;
+    const timer = setTimeout(async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const upsertData = items.map(item => mapToDB(item, user.id));
+        await supabase.from('memos').upsert(upsertData);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [items, isLoaded]);
+
+  const changeDragDelay = async (sec: number) => {
+    setDragDelaySec(sec);
+    await AsyncStorage.setItem('dragDelaySec', sec.toString());
+  };
 
   const currentItems = items.filter(item => item.parentId === currentParentId);
   const currentTitle = history[history.length - 1].title;
@@ -120,7 +220,6 @@ export default function MemoApp() {
     };
     setItems(prev => [...prev, newItem]);
 
-    // 💡 フォルダを追加した時は、自動的に「編集モード」にする！
     if (type === 'folder') {
       setEditingFolderId(newId);
     }
@@ -140,7 +239,7 @@ export default function MemoApp() {
     Alert.alert("削除の確認", `${selectedIds.length}件の項目を削除しますか？`, [
       { text: "キャンセル", style: "cancel" },
       {
-        text: "削除", style: "destructive", onPress: () => {
+        text: "削除", style: "destructive", onPress: async () => {
           const idsToDelete = new Set<string>(selectedIds);
           let oldSize = 0;
           while (idsToDelete.size > oldSize) {
@@ -148,6 +247,10 @@ export default function MemoApp() {
             items.forEach(item => {
               if (item.parentId !== null && idsToDelete.has(item.parentId)) idsToDelete.add(item.id);
             });
+          }
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            await supabase.from('memos').delete().in('id', Array.from(idsToDelete));
           }
           setItems(prev => prev.filter(item => !idsToDelete.has(item.id)));
           setIsSelectMode(false);
@@ -157,16 +260,55 @@ export default function MemoApp() {
     ]);
   };
 
-  // 🌟 フォルダ専用のアイコン（写真）を選ぶ機能
+  // 🌟 追加：移動開始の準備をする関数
+  const startMoving = () => {
+    setMovingItemIds([...selectedIds]);
+    setIsSelectMode(false);
+    setSelectedIds([]);
+    setIsMoving(true);
+  };
+
+  // 🌟 追加：移動をキャンセルする関数
+  const cancelMove = () => {
+    setIsMoving(false);
+    setMovingItemIds([]);
+  };
+
+  // 🌟 追加：フォルダが自分自身の中に入り込んで消滅するのを防ぐ安全確認用の関数
+  const isChildOfMovingItems = (targetParentId: string | null): boolean => {
+    if (targetParentId === null) return false;
+    if (movingItemIds.includes(targetParentId)) return true;
+    const parentFolder = items.find(item => item.id === targetParentId);
+    if (parentFolder) {
+      return isChildOfMovingItems(parentFolder.parentId);
+    }
+    return false;
+  };
+
+  // 🌟 追加：決定ボタンを押して実際に移動を完了させる関数
+  const executeMove = () => {
+    if (isChildOfMovingItems(currentParentId)) {
+      Alert.alert("エラー", "移動させたいフォルダ自身や、その内側の階層には移動できません。上の階層などを選んでください。");
+      return;
+    }
+
+    setItems(prev => prev.map(item =>
+      movingItemIds.includes(item.id) ? { ...item, parentId: currentParentId } : item
+    ));
+    setIsMoving(false);
+    setMovingItemIds([]);
+  };
+
   const pickFolderIcon = async (id: string) => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      aspect: [1, 1], // アイコンなので「正方形」に固定して切り取ります
+      aspect: [1, 1],
       quality: 0.5,
     });
     if (!result.canceled) {
-      updateItem(id, { folderIconUri: result.assets[0].uri });
+      const publicUrl = await uploadToStorage(result.assets[0].uri, 'icons');
+      updateItem(id, { folderIconUri: publicUrl });
     }
   };
 
@@ -178,8 +320,9 @@ export default function MemoApp() {
     });
     if (!result.canceled) {
       const asset = result.assets[0];
+      const publicUrl = await uploadToStorage(asset.uri, 'images');
       updateItem(id, {
-        imageUri: asset.uri,
+        imageUri: publicUrl,
         imageWidth: asset.width,
         imageHeight: asset.height
       });
@@ -193,7 +336,8 @@ export default function MemoApp() {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
-        updateItem(id, { fileUri: file.uri, fileName: file.name });
+        const publicUrl = await uploadToStorage(file.uri, 'files');
+        updateItem(id, { fileUri: publicUrl, fileName: file.name });
       }
     } catch (error) {
       Alert.alert("エラー", "ファイルの読み込みに失敗しました");
@@ -217,32 +361,34 @@ export default function MemoApp() {
   const renderItem = ({ item, drag, isActive }: any) => {
     const isEditing = editingFolderId === item.id;
 
+    // 移動中のアイテムは画面で少し薄く表示するための設定
+    const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
+
     return (
       <ScaleDecorator>
-        <View style={[styles.itemCard, isActive && styles.itemCardActive]}>
+        <View style={[
+          styles.itemCard,
+          isActive && styles.itemCardActive,
+          isThisItemMoving && { opacity: 0.4 } // 移動対象のアイテムは半透明にする
+        ]}>
 
-          {/* 🌟 Folder View */}
           {item.type === 'folder' && (
             <View style={styles.folderContainer}>
-
-              {/* アイコンと文字のエリア */}
               <TouchableOpacity
                 style={styles.folderMainArea}
                 activeOpacity={isEditing ? 1 : 0.7}
+                disabled={isThisItemMoving} // 移動対象のアイテムはタップできないように保護
                 onPress={() => {
                   if (isSelectMode) toggleSelection(item.id);
-                  else if (!isEditing) goInside(item); // 編集モードじゃない時だけ中に入る
+                  else if (!isEditing) goInside(item);
                 }}
               >
-                {/* フォルダアイコン */}
                 <View style={styles.folderIconWrapper}>
                   {item.folderIconUri ? (
                     <Image source={{ uri: item.folderIconUri }} style={styles.customFolderIcon} />
                   ) : (
                     <MaterialIcons name="folder" size={36} color={GOOGLE_COLORS.blue} />
                   )}
-
-                  {/* 編集モード中だけ「カメラマーク」を表示し、タップで写真を選べるようにする */}
                   {isEditing && (
                     <>
                       <View style={styles.editIconBadge}>
@@ -256,7 +402,6 @@ export default function MemoApp() {
                   )}
                 </View>
 
-                {/* フォルダ名 */}
                 {isEditing ? (
                   <TextInput
                     style={styles.folderInput}
@@ -274,7 +419,6 @@ export default function MemoApp() {
                 )}
               </TouchableOpacity>
 
-              {/* 右側のボタンエリア */}
               <View style={styles.folderActionArea}>
                 {isSelectMode ? (
                   <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
@@ -293,7 +437,7 @@ export default function MemoApp() {
                     <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={GOOGLE_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconButton} onLongPress={drag}>
+                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag}>
                       <MaterialIcons name="drag-indicator" size={24} color={GOOGLE_COLORS.textSecondary} />
                     </TouchableOpacity>
                   </>
@@ -302,7 +446,6 @@ export default function MemoApp() {
             </View>
           )}
 
-          {/* Note View */}
           {item.type === 'note' && (
             <View style={styles.noteContainer}>
               <View style={styles.noteHeader}>
@@ -313,19 +456,19 @@ export default function MemoApp() {
                   placeholder="タイトル"
                   placeholderTextColor={GOOGLE_COLORS.textSecondary}
                   selectionColor={GOOGLE_COLORS.blue}
-                  editable={!isSelectMode}
+                  editable={!isSelectMode && !isThisItemMoving}
                 />
 
                 {isSelectMode ? (
-                  <View style={styles.iconButton}>
+                  <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
                     <MaterialIcons
                       name={selectedIds.includes(item.id) ? "check-circle" : "radio-button-unchecked"}
                       size={28}
                       color={selectedIds.includes(item.id) ? GOOGLE_COLORS.blue : GOOGLE_COLORS.border}
                     />
-                  </View>
+                  </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity style={styles.iconButton} onLongPress={drag}>
+                  <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
                     <MaterialIcons name="drag-indicator" size={24} color={GOOGLE_COLORS.textSecondary} />
                   </TouchableOpacity>
                 )}
@@ -339,7 +482,7 @@ export default function MemoApp() {
                 placeholderTextColor={GOOGLE_COLORS.textSecondary}
                 multiline
                 selectionColor={GOOGLE_COLORS.blue}
-                editable={!isSelectMode}
+                editable={!isSelectMode && !isThisItemMoving}
               />
 
               {item.imageUri && (
@@ -362,6 +505,7 @@ export default function MemoApp() {
                   style={styles.fileCard}
                   onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
                   activeOpacity={isSelectMode ? 1 : 0.7}
+                  disabled={isThisItemMoving}
                 >
                   <MaterialIcons name="insert-drive-file" size={24} color={GOOGLE_COLORS.blue} />
                   <View style={styles.fileInfo}>
@@ -373,13 +517,13 @@ export default function MemoApp() {
               )}
 
               <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.chipButton} onPress={() => !isSelectMode && pickImage(item.id)}>
+                <TouchableOpacity style={styles.chipButton} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
                   <MaterialIcons name="image" size={18} color={item.imageUri ? GOOGLE_COLORS.blue : GOOGLE_COLORS.textSecondary} />
                   <Text style={[styles.chipText, item.imageUri && { color: GOOGLE_COLORS.blue }]}>
                     {item.imageUri ? "画像変更" : "画像"}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.chipButton} onPress={() => !isSelectMode && pickDocument(item.id)}>
+                <TouchableOpacity style={styles.chipButton} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
                   <MaterialIcons name="attach-file" size={18} color={item.fileName ? GOOGLE_COLORS.blue : GOOGLE_COLORS.textSecondary} />
                   <Text style={[styles.chipText, item.fileName && { color: GOOGLE_COLORS.blue }]}>
                     {item.fileName ? "ファイル変更" : "ファイル"}
@@ -399,7 +543,6 @@ export default function MemoApp() {
               onPress={() => toggleSelection(item.id)}
             />
           )}
-
         </View>
       </ScaleDecorator>
     );
@@ -417,7 +560,7 @@ export default function MemoApp() {
       >
         <Stack.Screen
           options={{
-            headerTitle: isSelectMode ? `${selectedIds.length}件選択` : currentTitle,
+            headerTitle: isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle,
             headerBackVisible: false,
             headerLeft: () => isSelectMode ? (
               <TouchableOpacity onPress={() => { setIsSelectMode(false); setSelectedIds([]); }} style={styles.headerButton}>
@@ -428,20 +571,20 @@ export default function MemoApp() {
                 <MaterialIcons name="arrow-back" size={24} color={GOOGLE_COLORS.textSecondary} />
               </TouchableOpacity>
             ) : (
-              <View style={styles.headerSpacer} />
+              <TouchableOpacity onPress={() => setIsSettingsOpen(true)} style={styles.headerButton}>
+                <MaterialIcons name="settings" size={24} color={GOOGLE_COLORS.textSecondary} />
+              </TouchableOpacity>
             ),
             headerRight: () => isSelectMode ? (
-              <TouchableOpacity
-                onPress={deleteSelectedItems}
-                style={styles.headerButton}
-                disabled={selectedIds.length === 0}
-              >
-                <MaterialIcons
-                  name="delete"
-                  size={24}
-                  color={selectedIds.length > 0 ? GOOGLE_COLORS.red : GOOGLE_COLORS.border}
-                />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {/* 🌟 追加：選択モードの時に表示される「移動」ボタン */}
+                <TouchableOpacity onPress={startMoving} style={styles.headerButton} disabled={selectedIds.length === 0}>
+                  <MaterialIcons name="drive-file-move" size={24} color={selectedIds.length > 0 ? GOOGLE_COLORS.blue : GOOGLE_COLORS.border} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={deleteSelectedItems} style={styles.headerButton} disabled={selectedIds.length === 0}>
+                  <MaterialIcons name="delete" size={24} color={selectedIds.length > 0 ? GOOGLE_COLORS.red : GOOGLE_COLORS.border} />
+                </TouchableOpacity>
+              </View>
             ) : (
               <TouchableOpacity onPress={() => setIsSelectMode(true)} style={styles.headerButton}>
                 <MaterialIcons name="more-vert" size={26} color={GOOGLE_COLORS.textSecondary} />
@@ -459,17 +602,33 @@ export default function MemoApp() {
           onDragEnd={onDragEnd}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: 100, padding: 12 }}
+          contentContainerStyle={{ paddingBottom: isMoving ? 160 : 100, padding: 12 }}
           showsVerticalScrollIndicator={false}
           dragHitSlop={{ top: 0, left: 0, bottom: 0, right: 0 }}
           activationDistance={isSelectMode ? 999 : 10}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialIcons name="lightbulb-outline" size={64} color={GOOGLE_COLORS.border} />
-              <Text style={styles.emptyText}>右下の＋ボタンからメモやフォルダを追加できます</Text>
+              <Text style={styles.emptyText}>この階層には何もありません</Text>
             </View>
           }
         />
+
+        {/* 🌟 追加：移動モード中に画面の下に表示される専用メニュー */}
+        {isMoving && (
+          <View style={styles.moveBanner}>
+            <Text style={styles.moveBannerText}>{movingItemIds.length}件の項目を移動中</Text>
+            <Text style={styles.moveBannerSubText}>上の戻るボタンやフォルダを押して、移動先を開いてください</Text>
+            <View style={styles.moveBannerButtons}>
+              <TouchableOpacity onPress={cancelMove} style={styles.moveCancelBtn}>
+                <Text style={styles.moveCancelText}>キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={executeMove} style={styles.moveExecuteBtn}>
+                <Text style={styles.moveExecuteText}>ここに決定</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {isFabOpen && (
           <TouchableOpacity
@@ -479,7 +638,7 @@ export default function MemoApp() {
           />
         )}
 
-        {!isSelectMode && isFabOpen && (
+        {!isSelectMode && !isMoving && isFabOpen && (
           <View style={styles.fabMenuContainer}>
             <TouchableOpacity style={styles.fabMenuItem} onPress={() => handleAdd('folder')}>
               <Text style={styles.fabMenuItemText}>フォルダ</Text>
@@ -496,7 +655,7 @@ export default function MemoApp() {
           </View>
         )}
 
-        {!isSelectMode && (
+        {!isSelectMode && !isMoving && (
           <TouchableOpacity
             style={[styles.mainFab, isFabOpen && styles.mainFabActive]}
             onPress={() => setIsFabOpen(!isFabOpen)}
@@ -509,6 +668,50 @@ export default function MemoApp() {
             />
           </TouchableOpacity>
         )}
+
+        <Modal visible={isSettingsOpen} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setIsSettingsOpen(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={styles.settingsCard}>
+              <Text style={styles.settingsTitle}>設定</Text>
+              <Text style={styles.settingsSubtitle}>ドラッグ開始までの長押し時間</Text>
+
+              <View style={{ width: '100%', alignItems: 'center', marginBottom: 24 }}>
+                <Text style={{ fontSize: 36, fontWeight: 'bold', color: GOOGLE_COLORS.blue, marginBottom: 16 }}>
+                  {dragDelaySec.toFixed(1)}<Text style={{ fontSize: 16, color: GOOGLE_COLORS.textSecondary }}> 秒</Text>
+                </Text>
+
+                <Slider
+                  style={{ width: '100%', height: 40 }}
+                  minimumValue={0.1}
+                  maximumValue={3.0}
+                  step={0.1}
+                  value={dragDelaySec}
+                  onValueChange={(val) => setDragDelaySec(val)}
+                  onSlidingComplete={(val) => changeDragDelay(val)}
+                  minimumTrackTintColor={GOOGLE_COLORS.blue}
+                  maximumTrackTintColor={GOOGLE_COLORS.border}
+                  thumbTintColor={Platform.OS === 'web' ? '#fff' : GOOGLE_COLORS.blue}
+                />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', paddingHorizontal: 12, marginTop: -4 }}>
+                  <Text style={{ color: GOOGLE_COLORS.textSecondary, fontSize: 12 }}>短め (0.1秒)</Text>
+                  <Text style={{ color: GOOGLE_COLORS.textSecondary, fontSize: 12 }}>長め (3.0秒)</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.closeSettingsButton}
+                onPress={() => setIsSettingsOpen(false)}
+              >
+                <Text style={styles.closeSettingsText}>閉じる</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
 
       </KeyboardAvoidingView>
     </GestureHandlerRootView>
@@ -541,7 +744,6 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.02 }],
   },
 
-  // 🌟 新しくなったフォルダのスタイル
   folderContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -748,5 +950,101 @@ const styles = StyleSheet.create({
     backgroundColor: GOOGLE_COLORS.surface,
     borderWidth: 1,
     borderColor: GOOGLE_COLORS.border
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsCard: {
+    backgroundColor: GOOGLE_COLORS.surface,
+    width: '85%',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  settingsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: GOOGLE_COLORS.textMain,
+    marginBottom: 8,
+  },
+  settingsSubtitle: {
+    fontSize: 14,
+    color: GOOGLE_COLORS.textSecondary,
+    marginBottom: 20,
+  },
+  closeSettingsButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    backgroundColor: GOOGLE_COLORS.background,
+    borderRadius: 24,
+  },
+  closeSettingsText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: GOOGLE_COLORS.textSecondary,
+  },
+
+  // 🌟 追加：移動モード中の画面下部メニューのスタイル
+  moveBanner: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: GOOGLE_COLORS.surface,
+    padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
+    borderTopWidth: 1,
+    borderColor: GOOGLE_COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 10,
+    zIndex: 20
+  },
+  moveBannerText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: GOOGLE_COLORS.textMain,
+    marginBottom: 4
+  },
+  moveBannerSubText: {
+    fontSize: 13,
+    color: GOOGLE_COLORS.textSecondary,
+    marginBottom: 12
+  },
+  moveBannerButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12
+  },
+  moveCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: GOOGLE_COLORS.background
+  },
+  moveCancelText: {
+    color: GOOGLE_COLORS.textSecondary,
+    fontWeight: '600'
+  },
+  moveExecuteBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: GOOGLE_COLORS.blue
+  },
+  moveExecuteText: {
+    color: '#FFF',
+    fontWeight: 'bold'
   }
 });
