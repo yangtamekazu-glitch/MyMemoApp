@@ -7,53 +7,75 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   const signUpWithEmail = async () => {
     setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) Alert.alert('エラー', error.message);
-    else Alert.alert('確認', '登録完了しました（メール確認が有効な場合はメールを確認してください）');
+    setErrorMsg('');
+    setSuccessMsg('');
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      if (data.session) {
+        router.replace('/');
+      } else {
+        setSuccessMsg('登録完了しました。メール確認を有効にしている場合は、届いたメールのリンクをクリックしてください。');
+      }
+    }
     setLoading(false);
   };
 
   const signInWithEmail = async () => {
     setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) Alert.alert('エラー', error.message);
-    else router.replace('/');
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      router.replace('/');
+    }
     setLoading(false);
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>MyMemoApp ログイン</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="メールアドレス"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="パスワード"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      
-      {loading ? (
-        <ActivityIndicator size="large" color="#4285F4" style={{ marginTop: 20 }} />
-      ) : (
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={[styles.button, styles.loginButton]} onPress={signInWithEmail}>
-            <Text style={styles.buttonText}>ログイン</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, styles.signupButton]} onPress={signUpWithEmail}>
-            <Text style={styles.buttonText}>新規登録</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      <View style={styles.formContainer}>
+        <Text style={styles.title}>MyMemoApp ログイン</Text>
+        
+        {errorMsg !== '' && <Text style={styles.errorText}>{errorMsg}</Text>}
+        {successMsg !== '' && <Text style={styles.successText}>{successMsg}</Text>}
+
+        <TextInput
+          style={styles.input}
+          placeholder="メールアドレス"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="パスワード"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+        
+        {loading ? (
+          <ActivityIndicator size="large" color="#4285F4" style={{ marginTop: 20 }} />
+        ) : (
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity style={[styles.button, styles.loginButton]} onPress={signInWithEmail}>
+              <Text style={styles.buttonText}>ログイン</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, styles.signupButton]} onPress={signUpWithEmail}>
+              <Text style={styles.buttonText}>新規登録</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -65,12 +87,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#F8F9FA',
   },
+  formContainer: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 24,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 2,
+  },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 24,
     textAlign: 'center',
     color: '#202124',
+  },
+  errorText: {
+    color: '#D93025',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  successText: {
+    color: '#188038',
+    marginBottom: 16,
+    textAlign: 'center',
   },
   input: {
     borderWidth: 1,
