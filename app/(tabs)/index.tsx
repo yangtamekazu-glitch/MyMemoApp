@@ -87,7 +87,7 @@ export default function MemoApp() {
       const response = await fetch(uri);
       const blob = await response.blob();
       const ext = uri.split('.').pop() || 'png';
-      const path = \`\${folder}/\${Date.now()}_\${Math.random().toString(36).substring(7)}.\${ext}\`;
+      const path = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
       const { error } = await supabase.storage.from('memo-assets').upload(path, blob);
       if (error) throw error;
       const { data } = supabase.storage.from('memo-assets').getPublicUrl(path);
@@ -132,7 +132,7 @@ export default function MemoApp() {
   }, [isFabOpen]);
 
   const fabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: \`\${fabRotation.value}deg\` }]
+    transform: [{ rotate: `${fabRotation.value}deg` }]
   }));
 
   const menuAnimatedStyle = useAnimatedStyle(() => ({
@@ -298,11 +298,11 @@ export default function MemoApp() {
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm(\`\${selectedIds.length}件の項目を削除しますか？\`)) {
+      if (window.confirm(`${selectedIds.length}件の項目を削除しますか？`)) {
         executeDelete();
       }
     } else {
-      Alert.alert("削除の確認", \`\${selectedIds.length}件の項目を削除しますか？\`, [
+      Alert.alert("削除の確認", `${selectedIds.length}件の項目を削除しますか？`, [
         { text: "キャンセル", style: "cancel" },
         { text: "削除", style: "destructive", onPress: executeDelete }
       ]);
@@ -609,7 +609,7 @@ export default function MemoApp() {
       >
         <Stack.Screen
           options={{
-            headerTitle: isSelectMode ? \`\${selectedIds.length}件選択\` : isMoving ? '移動先の選択' : currentTitle,
+            headerTitle: isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle,
             headerBackVisible: false,
             headerLeft: () => isSelectMode ? (
               <TouchableOpacity onPress={() => { animateLayout(); setIsSelectMode(false); setSelectedIds([]); }} style={styles.headerButton}>
@@ -664,7 +664,7 @@ export default function MemoApp() {
 
         {isMoving && (
           <View style={styles.moveBanner}>
-            <Text style={styles.moveBannerText}>\${movingItemIds.length}件の項目を移動中</Text>
+            <Text style={styles.moveBannerText}>${movingItemIds.length}件の項目を移動中</Text>
             <Text style={styles.moveBannerSubText}>上の戻るボタンやフォルダを押して、移動先を開いてください</Text>
             <View style={styles.moveBannerButtons}>
               <TouchableOpacity onPress={cancelMove} style={styles.moveCancelBtn}>
