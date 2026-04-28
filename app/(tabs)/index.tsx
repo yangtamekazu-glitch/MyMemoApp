@@ -37,8 +37,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import * as Linking from 'expo-linking';
+import * as FileSystem from 'expo-file-system';
+import { decode } from 'base64-arraybuffer';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
@@ -102,11 +104,42 @@ const AutoExpandingTextInput = ({ style, ...props }: any) => {
 export default function MemoApp() {
   const uploadToStorage = async (uri: string, folder: string) => {
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const ext = uri.split('.').pop() || 'png';
+      let fileData: any;
+      let contentType = 'application/octet-stream';
+      let ext = 'png';
+      
+      if (uri.includes('.')) {
+        const parts = uri.split('.');
+        const possibleExt = parts[parts.length - 1].toLowerCase();
+        if (possibleExt.length <= 4) {
+          ext = possibleExt;
+        }
+      }
+
+      if (ext === 'png') contentType = 'image/png';
+      else if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
+      else if (ext === 'pdf') contentType = 'application/pdf';
+
+      if (Platform.OS === 'web') {
+        const response = await fetch(uri);
+        fileData = await response.blob();
+        if (fileData.type) {
+          contentType = fileData.type;
+          ext = contentType.split('/')[1] || ext;
+        }
+      } else {
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        fileData = decode(base64);
+      }
+
+      // sanitize ext
+      ext = ext.replace(/[^a-zA-Z0-9]/g, '');
+      if (!ext) ext = 'png';
+
       const path = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
-      const { error } = await supabase.storage.from('memo-assets').upload(path, blob);
+      const { error } = await supabase.storage.from('memo-assets').upload(path, fileData, {
+        contentType
+      });
       if (error) throw error;
       const { data } = supabase.storage.from('memo-assets').getPublicUrl(path);
       return data.publicUrl;
@@ -735,20 +768,42 @@ export default function MemoApp() {
           }}
         />
 
-        <DraggableFlatList
-          data={currentItems}
-          onDragEnd={onDragEnd}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-              <Text style={styles.emptyText}>この階層には何もありません</Text>
-            </View>
-          }
-        />
+        {Platform.OS === 'web' ? (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <DraggableFlatList
+              data={currentItems}
+              onDragEnd={onDragEnd}
+              keyExtractor={(item) => item.id}
+              renderItem={renderItem}
+              scrollEnabled={false}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+                  <Text style={styles.emptyText}>この階層には何もありません</Text>
+                </View>
+              }
+            />
+          </ScrollView>
+        ) : (
+          <DraggableFlatList
+            data={currentItems}
+            onDragEnd={onDragEnd}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+                <Text style={styles.emptyText}>この階層には何もありません</Text>
+              </View>
+            }
+          />
+        )}
 
         {isMoving && (
           <View style={styles.moveBanner}>
