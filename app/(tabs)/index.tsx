@@ -43,7 +43,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 
-import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
+import DraggableFlatList, { ScaleDecorator, NestableScrollContainer, NestableDraggableFlatList } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 if (Platform.OS === 'android') {
@@ -769,17 +769,16 @@ export default function MemoApp() {
         />
 
         {Platform.OS === 'web' ? (
-          <ScrollView
+          <NestableScrollContainer
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
             showsVerticalScrollIndicator={false}
           >
-            <DraggableFlatList
+            <NestableDraggableFlatList
               data={currentItems}
               onDragEnd={onDragEnd}
               keyExtractor={(item) => item.id}
               renderItem={renderItem}
-              scrollEnabled={false}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
@@ -787,7 +786,7 @@ export default function MemoApp() {
                 </View>
               }
             />
-          </ScrollView>
+          </NestableScrollContainer>
         ) : (
           <DraggableFlatList
             data={currentItems}
