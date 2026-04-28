@@ -766,8 +766,10 @@ export default function MemoApp() {
     return <View style={styles.loading}><ActivityIndicator size="large" color={THEME_COLORS.blue} /></View>;
   }
 
+  const RootWrapper = Platform.OS === 'web' ? View : GestureHandlerRootView;
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <RootWrapper style={{ flex: 1 }}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -997,7 +999,7 @@ export default function MemoApp() {
         </Modal>
 
       </KeyboardAvoidingView>
-    </GestureHandlerRootView>
+    </RootWrapper>
   );
 }
 
