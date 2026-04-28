@@ -82,6 +82,23 @@ const THEME_COLORS = {
   shadow: '#000000'
 };
 
+const AutoExpandingTextInput = ({ style, ...props }: any) => {
+  const [height, setHeight] = useState(40);
+  return (
+    <TextInput
+      {...props}
+      multiline
+      scrollEnabled={false}
+      style={[style, { height: Math.max(40, height) }]}
+      onContentSizeChange={(e) => {
+        if (e.nativeEvent?.contentSize?.height) {
+          setHeight(e.nativeEvent.contentSize.height);
+        }
+      }}
+    />
+  );
+};
+
 export default function MemoApp() {
   const uploadToStorage = async (uri: string, folder: string) => {
     try {
@@ -114,6 +131,7 @@ export default function MemoApp() {
 
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
+  const [attachmentMenu, setAttachmentMenu] = useState<{ id: string, type: 'image' | 'file', uri: string, fileName?: string | null } | null>(null);
 
   // Reanimated values for FAB
   const fabRotation = useSharedValue(0);
@@ -413,6 +431,21 @@ export default function MemoApp() {
     }
   };
 
+  const downloadAttachment = async (uri: string, fileName?: string | null) => {
+    if (!uri) return;
+    if (Platform.OS === 'web') {
+      const a = document.createElement('a');
+      a.href = uri;
+      a.download = fileName || 'download';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      await Linking.openURL(uri);
+    }
+  };
+
   const onDragEnd = ({ data }: any) => {
     const otherItems = items.filter(item => item.parentId !== currentParentId);
     setItems([...otherItems, ...data]);
@@ -532,14 +565,12 @@ export default function MemoApp() {
                 )}
               </View>
 
-              <TextInput
+              <AutoExpandingTextInput
                 style={styles.noteInput}
                 value={item.text}
                 onChangeText={(text) => updateItem(item.id, { text: text })}
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
-                multiline
-                scrollEnabled={false}
                 selectionColor={THEME_COLORS.blue}
                 editable={!isSelectMode && !isThisItemMoving}
               />
@@ -566,9 +597,9 @@ export default function MemoApp() {
                   {!isSelectMode && !isThisItemMoving && (
                     <TouchableOpacity
                       style={styles.deleteAttachmentButton}
-                      onPress={() => updateItem(item.id, { imageUri: null, imageWidth: null, imageHeight: null })}
+                      onPress={() => setAttachmentMenu({ id: item.id, type: 'image', uri: item.imageUri! })}
                     >
-                      <MaterialIcons name="close" size={18} color="#FFF" />
+                      <MaterialIcons name="more-vert" size={20} color="#FFF" />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -592,9 +623,9 @@ export default function MemoApp() {
                   {!isSelectMode && !isThisItemMoving && (
                     <TouchableOpacity
                       style={styles.deleteAttachmentButton}
-                      onPress={() => updateItem(item.id, { fileUri: null, fileName: null })}
+                      onPress={() => setAttachmentMenu({ id: item.id, type: 'file', uri: item.fileUri!, fileName: item.fileName })}
                     >
-                      <MaterialIcons name="close" size={18} color="#FFF" />
+                      <MaterialIcons name="more-vert" size={20} color="#FFF" />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -792,6 +823,54 @@ export default function MemoApp() {
                 onPress={() => setIsSettingsOpen(false)}
               >
                 <Text style={styles.closeSettingsText}>閉じる</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+
+        <Modal visible={!!attachmentMenu} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setAttachmentMenu(null)}
+          >
+            <TouchableOpacity activeOpacity={1} style={styles.actionSheet}>
+              <Text style={styles.actionSheetTitle}>添付ファイルの操作</Text>
+              
+              <TouchableOpacity style={styles.actionSheetButton} onPress={() => {
+                if (attachmentMenu) downloadAttachment(attachmentMenu.uri, attachmentMenu.fileName);
+                setAttachmentMenu(null);
+              }}>
+                <MaterialIcons name="file-download" size={22} color={THEME_COLORS.blue} />
+                <Text style={styles.actionSheetButtonText}>ダウンロード</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.actionSheetButton} onPress={() => {
+                if (attachmentMenu) {
+                  const executeDelete = () => {
+                    if (attachmentMenu.type === 'image') {
+                      updateItem(attachmentMenu.id, { imageUri: null, imageWidth: null, imageHeight: null });
+                    } else {
+                      updateItem(attachmentMenu.id, { fileUri: null, fileName: null });
+                    }
+                  };
+                  if (Platform.OS === 'web') {
+                    if (window.confirm("この添付を削除しますか？")) executeDelete();
+                  } else {
+                    Alert.alert(
+                      attachmentMenu.type === 'image' ? "画像の削除" : "ファイルの削除",
+                      "この添付を削除してもよろしいですか？",
+                      [
+                        { text: "キャンセル", style: "cancel" },
+                        { text: "削除", style: "destructive", onPress: executeDelete }
+                      ]
+                    );
+                  }
+                }
+                setAttachmentMenu(null);
+              }}>
+                <MaterialIcons name="delete" size={22} color={THEME_COLORS.red} />
+                <Text style={[styles.actionSheetButtonText, { color: THEME_COLORS.red }]}>削除</Text>
               </TouchableOpacity>
             </TouchableOpacity>
           </TouchableOpacity>
@@ -1082,6 +1161,40 @@ const styles = StyleSheet.create({
   closeSettingsText: {
     fontSize: 16,
     fontWeight: '700',
+    color: THEME_COLORS.textMain,
+  },
+
+  actionSheet: {
+    backgroundColor: THEME_COLORS.surface,
+    width: '90%',
+    maxWidth: 400,
+    borderRadius: 24,
+    paddingVertical: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  actionSheetTitle: {
+    fontSize: 14,
+    color: THEME_COLORS.textSecondary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  actionSheetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    gap: 16,
+  },
+  actionSheetButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
     color: THEME_COLORS.textMain,
   },
 
