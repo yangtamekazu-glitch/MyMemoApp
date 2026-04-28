@@ -570,7 +570,7 @@ export default function MemoApp() {
               <AutoExpandingTextInput
                 style={styles.noteInput}
                 value={item.text}
-                onChangeText={(text) => updateItem(item.id, { text: text })}
+                onChangeText={(text: string) => updateItem(item.id, { text: text })}
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 selectionColor={THEME_COLORS.blue}
