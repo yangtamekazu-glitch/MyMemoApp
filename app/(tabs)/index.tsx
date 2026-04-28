@@ -484,7 +484,25 @@ export default function MemoApp() {
     setItems([...otherItems, ...data]);
   };
 
-  const renderItem = ({ item, drag, isActive }: any) => {
+  const moveItem = (index: number, direction: 'up' | 'down') => {
+    const currentList = [...currentItems];
+    if (direction === 'up' && index > 0) {
+      const temp = currentList[index];
+      currentList[index] = currentList[index - 1];
+      currentList[index - 1] = temp;
+    } else if (direction === 'down' && index < currentList.length - 1) {
+      const temp = currentList[index];
+      currentList[index] = currentList[index + 1];
+      currentList[index + 1] = temp;
+    } else {
+      return;
+    }
+    const otherItems = items.filter(item => item.parentId !== currentParentId);
+    setItems([...otherItems, ...currentList]);
+  };
+
+  const renderItem = ({ item, drag, isActive, index, getIndex }: any) => {
+    const currentIndex = getIndex ? getIndex() : index;
     const isEditing = editingItemId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
@@ -561,9 +579,20 @@ export default function MemoApp() {
                     <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag}>
-                      <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
-                    </TouchableOpacity>
+                    {Platform.OS === 'web' ? (
+                      <View style={{ flexDirection: 'row' }}>
+                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'up')} disabled={currentIndex === 0 || isThisItemMoving}>
+                           <MaterialIcons name="keyboard-arrow-up" size={24} color={currentIndex === 0 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'down')} disabled={currentIndex === currentItems.length - 1 || isThisItemMoving}>
+                           <MaterialIcons name="keyboard-arrow-down" size={24} color={currentIndex === currentItems.length - 1 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
+                        <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                      </TouchableOpacity>
+                    )}
                   </>
                 )}
               </View>
@@ -600,9 +629,20 @@ export default function MemoApp() {
                     <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
-                      <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
-                    </TouchableOpacity>
+                    {Platform.OS === 'web' ? (
+                      <View style={{ flexDirection: 'row' }}>
+                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'up')} disabled={currentIndex === 0 || isThisItemMoving}>
+                           <MaterialIcons name="keyboard-arrow-up" size={24} color={currentIndex === 0 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'down')} disabled={currentIndex === currentItems.length - 1 || isThisItemMoving}>
+                           <MaterialIcons name="keyboard-arrow-down" size={24} color={currentIndex === currentItems.length - 1 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
+                        <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                      </TouchableOpacity>
+                    )}
                   </>
                 )}
               </View>
@@ -769,24 +809,19 @@ export default function MemoApp() {
         />
 
         {Platform.OS === 'web' ? (
-          <NestableScrollContainer
-            style={{ flex: 1 }}
+          <FlatList
+            data={currentItems}
+            keyExtractor={(item) => item.id}
+            renderItem={(props) => renderItem({ ...props, drag: () => {}, isActive: false })}
             contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
             showsVerticalScrollIndicator={false}
-          >
-            <NestableDraggableFlatList
-              data={currentItems}
-              onDragEnd={onDragEnd}
-              keyExtractor={(item) => item.id}
-              renderItem={renderItem}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-                  <Text style={styles.emptyText}>この階層には何もありません</Text>
-                </View>
-              }
-            />
-          </NestableScrollContainer>
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+                <Text style={styles.emptyText}>この階層には何もありません</Text>
+              </View>
+            }
+          />
         ) : (
           <DraggableFlatList
             data={currentItems}
