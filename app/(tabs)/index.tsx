@@ -574,15 +574,22 @@ export default function MemoApp() {
                 )}
               </View>
 
-              <AutoExpandingTextInput
-                style={styles.noteInput}
-                value={item.text}
-                onChangeText={(text: string) => updateItem(item.id, { text: text })}
-                placeholder="メモを入力..."
-                placeholderTextColor={THEME_COLORS.textSecondary}
-                selectionColor={THEME_COLORS.blue}
-                editable={isEditing && !isSelectMode && !isThisItemMoving}
-              />
+              {isEditing ? (
+                <AutoExpandingTextInput
+                  style={styles.noteInput}
+                  value={item.text}
+                  onChangeText={(text: string) => updateItem(item.id, { text: text })}
+                  placeholder="メモを入力..."
+                  placeholderTextColor={THEME_COLORS.textSecondary}
+                  selectionColor={THEME_COLORS.blue}
+                  editable={!isSelectMode && !isThisItemMoving}
+                  autoFocus
+                />
+              ) : (
+                <Text style={[styles.noteInput, { paddingVertical: Platform.OS === 'web' ? 8 : 0 }, !item.text && { color: THEME_COLORS.textSecondary }]}>
+                  {item.text || "メモを入力..."}
+                </Text>
+              )}
 
               {item.imageUri && (
                 <View style={styles.attachmentWrapper}>
@@ -735,8 +742,6 @@ export default function MemoApp() {
           renderItem={renderItem}
           contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
           showsVerticalScrollIndicator={false}
-          dragHitSlop={{ top: 0, left: 0, bottom: 0, right: 0 }}
-          activationDistance={isSelectMode ? 999 : 10}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
