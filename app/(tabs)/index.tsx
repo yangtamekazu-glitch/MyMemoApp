@@ -36,6 +36,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
+import * as Linking from 'expo-linking';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
@@ -396,11 +397,19 @@ export default function MemoApp() {
   };
 
   const openFile = async (uri: string) => {
-    const isAvailable = await Sharing.isAvailableAsync();
-    if (isAvailable) {
-      await Sharing.shareAsync(uri);
-    } else {
-      Alert.alert('エラー', 'このデバイスではファイルを開けません');
+    try {
+      if (uri.startsWith('http')) {
+        await Linking.openURL(uri);
+      } else {
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (isAvailable) {
+          await Sharing.shareAsync(uri);
+        } else {
+          Alert.alert('エラー', 'このデバイスではファイルを開けません');
+        }
+      }
+    } catch (error) {
+      Alert.alert('エラー', 'ファイルを開けませんでした');
     }
   };
 
@@ -530,39 +539,65 @@ export default function MemoApp() {
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 multiline
+                scrollEnabled={false}
                 selectionColor={THEME_COLORS.blue}
                 editable={!isSelectMode && !isThisItemMoving}
               />
 
               {item.imageUri && (
-                <View style={styles.attachmentContainer}>
-                  <Image
-                    source={{ uri: item.imageUri }}
-                    style={[
-                      styles.image,
-                      item.imageWidth && item.imageHeight
-                        ? { aspectRatio: item.imageWidth / item.imageHeight }
-                        : { height: 200 }
-                    ]}
-                    resizeMode="cover"
-                  />
+                <View style={styles.attachmentWrapper}>
+                  <TouchableOpacity
+                    style={[styles.attachmentContainer, { marginTop: 0 }]}
+                    onPress={() => !isSelectMode && openFile(item.imageUri!)}
+                    activeOpacity={isSelectMode ? 1 : 0.7}
+                    disabled={isThisItemMoving}
+                  >
+                    <Image
+                      source={{ uri: item.imageUri }}
+                      style={[
+                        styles.image,
+                        item.imageWidth && item.imageHeight
+                          ? { aspectRatio: item.imageWidth / item.imageHeight }
+                          : { height: 200 }
+                      ]}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                  {!isSelectMode && !isThisItemMoving && (
+                    <TouchableOpacity
+                      style={styles.deleteAttachmentButton}
+                      onPress={() => updateItem(item.id, { imageUri: null, imageWidth: null, imageHeight: null })}
+                    >
+                      <MaterialIcons name="close" size={18} color="#FFF" />
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
 
               {item.fileName && (
-                <TouchableOpacity
-                  style={styles.fileCard}
-                  onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
-                  activeOpacity={isSelectMode ? 1 : 0.7}
-                  disabled={isThisItemMoving}
-                >
-                  <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
-                  <View style={styles.fileInfo}>
-                    <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
-                      {item.fileName}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                <View style={styles.attachmentWrapper}>
+                  <TouchableOpacity
+                    style={[styles.fileCard, { marginTop: 0 }]}
+                    onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
+                    activeOpacity={isSelectMode ? 1 : 0.7}
+                    disabled={isThisItemMoving}
+                  >
+                    <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
+                    <View style={styles.fileInfo}>
+                      <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
+                        {item.fileName}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  {!isSelectMode && !isThisItemMoving && (
+                    <TouchableOpacity
+                      style={styles.deleteAttachmentButton}
+                      onPress={() => updateItem(item.id, { fileUri: null, fileName: null })}
+                    >
+                      <MaterialIcons name="close" size={18} color="#FFF" />
+                    </TouchableOpacity>
+                  )}
+                </View>
               )}
 
               <View style={styles.actionRow}>
@@ -870,6 +905,27 @@ const styles = StyleSheet.create({
     padding: 0,
   },
 
+  attachmentWrapper: {
+    position: 'relative',
+    marginTop: 16,
+  },
+  deleteAttachmentButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: THEME_COLORS.textMain,
+    borderRadius: 16,
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+    zIndex: 10,
+  },
   attachmentContainer: {
     marginTop: 16,
     borderRadius: 16,
