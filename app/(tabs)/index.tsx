@@ -124,7 +124,7 @@ export default function MemoApp() {
 
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const [dragDelaySec, setDragDelaySec] = useState(0.5);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -250,7 +250,7 @@ export default function MemoApp() {
     setHistory([...history, { id: folder.id, title: folder.title }]);
     setIsSelectMode(false);
     setSelectedIds([]);
-    setEditingFolderId(null);
+    setEditingItemId(null);
   };
 
   const goBack = () => {
@@ -262,7 +262,7 @@ export default function MemoApp() {
       setCurrentParentId(newHistory[newHistory.length - 1].id);
       setIsSelectMode(false);
       setSelectedIds([]);
-      setEditingFolderId(null);
+      setEditingItemId(null);
     }
   };
 
@@ -283,9 +283,7 @@ export default function MemoApp() {
     };
     setItems(prev => [...prev, newItem]);
 
-    if (type === 'folder') {
-      setEditingFolderId(newId);
-    }
+    setEditingItemId(newId);
   };
 
   const updateItem = (id: string, updates: Partial<Item>) => {
@@ -454,7 +452,7 @@ export default function MemoApp() {
   };
 
   const renderItem = ({ item, drag, isActive }: any) => {
-    const isEditing = editingFolderId === item.id;
+    const isEditing = editingItemId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
     return (
@@ -503,7 +501,7 @@ export default function MemoApp() {
                     placeholder="無題のフォルダ"
                     placeholderTextColor={THEME_COLORS.textSecondary}
                     autoFocus
-                    onSubmitEditing={() => setEditingFolderId(null)}
+                    onSubmitEditing={() => setEditingItemId(null)}
                   />
                 ) : (
                   <Text style={[styles.folderText, !item.title && { color: THEME_COLORS.textSecondary }]}>
@@ -522,12 +520,12 @@ export default function MemoApp() {
                     />
                   </TouchableOpacity>
                 ) : isEditing ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(null)}>
+                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(null)}>
                     <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
                   </TouchableOpacity>
                 ) : (
                   <>
-                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag}>
@@ -549,7 +547,7 @@ export default function MemoApp() {
                   placeholder="タイトル"
                   placeholderTextColor={THEME_COLORS.textSecondary}
                   selectionColor={THEME_COLORS.blue}
-                  editable={!isSelectMode && !isThisItemMoving}
+                  editable={isEditing && !isSelectMode && !isThisItemMoving}
                 />
 
                 {isSelectMode ? (
@@ -560,10 +558,19 @@ export default function MemoApp() {
                       color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
                     />
                   </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
-                    <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                ) : isEditing ? (
+                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(null)}>
+                    <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
                   </TouchableOpacity>
+                ) : (
+                  <>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
+                      <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
+                      <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </>
                 )}
               </View>
 
@@ -574,7 +581,7 @@ export default function MemoApp() {
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 selectionColor={THEME_COLORS.blue}
-                editable={!isSelectMode && !isThisItemMoving}
+                editable={isEditing && !isSelectMode && !isThisItemMoving}
               />
 
               {item.imageUri && (
@@ -596,7 +603,7 @@ export default function MemoApp() {
                       resizeMode="cover"
                     />
                   </TouchableOpacity>
-                  {!isSelectMode && !isThisItemMoving && (
+                  {!isSelectMode && !isThisItemMoving && isEditing && (
                     <TouchableOpacity
                       style={styles.deleteAttachmentButton}
                       onPress={() => setAttachmentMenu({ id: item.id, type: 'image', uri: item.imageUri! })}
@@ -622,7 +629,7 @@ export default function MemoApp() {
                       </Text>
                     </View>
                   </TouchableOpacity>
-                  {!isSelectMode && !isThisItemMoving && (
+                  {!isSelectMode && !isThisItemMoving && isEditing && (
                     <TouchableOpacity
                       style={styles.deleteAttachmentButton}
                       onPress={() => setAttachmentMenu({ id: item.id, type: 'file', uri: item.fileUri!, fileName: item.fileName })}
@@ -633,20 +640,22 @@ export default function MemoApp() {
                 </View>
               )}
 
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
-                  <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                  <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
-                    {item.imageUri ? "画像変更" : "画像"}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
-                  <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                  <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
-                    {item.fileName ? "ファイル変更" : "ファイル"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              {isEditing && (
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
+                    <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                    <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
+                      {item.imageUri ? "画像変更" : "画像"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
+                    <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                    <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
+                      {item.fileName ? "ファイル変更" : "ファイル"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           )}
 
