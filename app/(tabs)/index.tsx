@@ -40,7 +40,7 @@ import * as Linking from 'expo-linking';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, ScrollView, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 
 import DraggableFlatList, { ScaleDecorator, NestableScrollContainer, NestableDraggableFlatList } from 'react-native-draggable-flatlist';
@@ -506,8 +506,7 @@ export default function MemoApp() {
     const isEditing = editingItemId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
-    return (
-      <ScaleDecorator>
+    const content = (
         <View style={[
           styles.itemCard,
           isActive && styles.itemCardActive,
@@ -602,15 +601,22 @@ export default function MemoApp() {
           {item.type === 'note' && (
             <View style={styles.noteContainer}>
               <View style={styles.noteHeader}>
-                <TextInput
-                  style={styles.noteTitleInput}
-                  value={item.title}
-                  onChangeText={(text) => updateItem(item.id, { title: text })}
-                  placeholder="タイトル"
-                  placeholderTextColor={THEME_COLORS.textSecondary}
-                  selectionColor={THEME_COLORS.blue}
-                  editable={isEditing && !isSelectMode && !isThisItemMoving}
-                />
+                {isEditing ? (
+                  <TextInput
+                    style={styles.noteTitleInput}
+                    value={item.title}
+                    onChangeText={(text) => updateItem(item.id, { title: text })}
+                    placeholder="タイトル"
+                    placeholderTextColor={THEME_COLORS.textSecondary}
+                    selectionColor={THEME_COLORS.blue}
+                    editable={!isSelectMode && !isThisItemMoving}
+                    autoFocus={!item.title}
+                  />
+                ) : (
+                  <Text style={[styles.noteTitleInput, { paddingVertical: Platform.OS === 'web' ? 4 : 0 }, !item.title && { color: THEME_COLORS.textSecondary }]}>
+                    {item.title || "タイトル"}
+                  </Text>
+                )}
 
                 {isSelectMode ? (
                   <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
@@ -750,8 +756,10 @@ export default function MemoApp() {
             />
           )}
         </View>
-      </ScaleDecorator>
     );
+
+    if (Platform.OS === 'web') return content;
+    return <ScaleDecorator>{content}</ScaleDecorator>;
   };
 
   if (!isLoaded) {
@@ -811,8 +819,8 @@ export default function MemoApp() {
         {Platform.OS === 'web' ? (
           <FlatList
             data={currentItems}
-            keyExtractor={(item) => item.id}
-            renderItem={(props) => renderItem({ ...props, drag: () => {}, isActive: false })}
+            keyExtractor={(item: any) => item.id}
+            renderItem={(props: any) => renderItem({ ...props, drag: () => {}, isActive: false })}
             contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
@@ -828,6 +836,7 @@ export default function MemoApp() {
             onDragEnd={onDragEnd}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
+            activationDistance={20}
             contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
