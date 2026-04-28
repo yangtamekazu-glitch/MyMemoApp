@@ -164,61 +164,63 @@ export default function MemoApp() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
   };
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          setIsLoaded(true);
-          return;
-        }
+  const loadData = async () => {
+    setIsLoaded(false);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setIsLoaded(true);
+        return;
+      }
 
-        const { data: dbData, error } = await supabase.from('memos').select('*').eq('user_id', user.id);
-        if (error) throw error;
+      const { data: dbData, error } = await supabase.from('memos').select('*').eq('user_id', user.id);
+      if (error) throw error;
 
-        let loadedItems: Item[] = [];
-        if (dbData && dbData.length > 0) {
-          loadedItems = dbData.map(mapFromDB);
-        }
+      let loadedItems: Item[] = [];
+      if (dbData && dbData.length > 0) {
+        loadedItems = dbData.map(mapFromDB);
+      }
 
-        const savedData = await AsyncStorage.getItem('my_memo_data');
-        if (savedData) {
-          const parsed: Item[] = JSON.parse(savedData);
-          const migratedFlag = await AsyncStorage.getItem('my_memo_data_migrated');
-          if (!migratedFlag && parsed.length > 0) {
-            const upsertData = parsed.map(item => mapToDB(item, user.id));
-            const { error: upsertError } = await supabase.from('memos').upsert(upsertData);
-            if (!upsertError) {
-              await AsyncStorage.setItem('my_memo_data_migrated', 'true');
-              const existingIds = new Set(loadedItems.map(i => i.id));
-              const missingLocals = parsed.filter(i => !existingIds.has(i.id));
-              loadedItems = [...loadedItems, ...missingLocals];
-            }
+      const savedData = await AsyncStorage.getItem('my_memo_data');
+      if (savedData) {
+        const parsed: Item[] = JSON.parse(savedData);
+        const migratedFlag = await AsyncStorage.getItem('my_memo_data_migrated');
+        if (!migratedFlag && parsed.length > 0) {
+          const upsertData = parsed.map(item => mapToDB(item, user.id));
+          const { error: upsertError } = await supabase.from('memos').upsert(upsertData);
+          if (!upsertError) {
+            await AsyncStorage.setItem('my_memo_data_migrated', 'true');
+            const existingIds = new Set(loadedItems.map(i => i.id));
+            const missingLocals = parsed.filter(i => !existingIds.has(i.id));
+            loadedItems = [...loadedItems, ...missingLocals];
           }
         }
-
-        if (loadedItems.length === 0) {
-          loadedItems = [
-            { id: '1', parentId: null, type: 'folder', title: '新しいフォルダ', text: '', imageUri: null, fileUri: null, fileName: null },
-            { id: '2', parentId: null, type: 'folder', title: 'アイデア', text: '', imageUri: null, fileUri: null, fileName: null },
-          ];
-          const defaultData = loadedItems.map(item => mapToDB(item, user.id));
-          await supabase.from('memos').upsert(defaultData);
-        }
-
-        setItems(loadedItems);
-
-        const savedDelay = await AsyncStorage.getItem('dragDelaySec');
-        if (savedDelay !== null) {
-          setDragDelaySec(parseFloat(savedDelay));
-        }
-
-      } catch (error) {
-        console.error("読み込みエラー", error);
-      } finally {
-        setIsLoaded(true);
       }
-    };
+
+      if (loadedItems.length === 0) {
+        loadedItems = [
+          { id: '1', parentId: null, type: 'folder', title: '新しいフォルダ', text: '', imageUri: null, fileUri: null, fileName: null },
+          { id: '2', parentId: null, type: 'folder', title: 'アイデア', text: '', imageUri: null, fileUri: null, fileName: null },
+        ];
+        const defaultData = loadedItems.map(item => mapToDB(item, user.id));
+        await supabase.from('memos').upsert(defaultData);
+      }
+
+      setItems(loadedItems);
+
+      const savedDelay = await AsyncStorage.getItem('dragDelaySec');
+      if (savedDelay !== null) {
+        setDragDelaySec(parseFloat(savedDelay));
+      }
+
+    } catch (error) {
+      console.error("読み込みエラー", error);
+    } finally {
+      setIsLoaded(true);
+    }
+  };
+
+  useEffect(() => {
     loadData();
   }, []);
 
@@ -675,7 +677,13 @@ export default function MemoApp() {
       >
         <Stack.Screen
           options={{
-            headerTitle: isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle,
+            headerTitle: () => (
+              <TouchableOpacity onPress={loadData} activeOpacity={0.6}>
+                <Text style={{ fontWeight: '700', fontSize: 20, color: THEME_COLORS.textMain }}>
+                  {isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle}
+                </Text>
+              </TouchableOpacity>
+            ),
             headerBackVisible: false,
             headerLeft: () => isSelectMode ? (
               <TouchableOpacity onPress={() => { animateLayout(); setIsSelectMode(false); setSelectedIds([]); }} style={styles.headerButton}>
