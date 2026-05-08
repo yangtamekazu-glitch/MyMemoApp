@@ -36,14 +36,11 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import * as Linking from 'expo-linking';
-import * as FileSystem from 'expo-file-system';
-import { decode } from 'base64-arraybuffer';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
+import { useEffect, useState, useRef } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 
-import DraggableFlatList, { ScaleDecorator, NestableScrollContainer, NestableDraggableFlatList } from 'react-native-draggable-flatlist';
+import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 if (Platform.OS === 'android') {
@@ -84,62 +81,14 @@ const THEME_COLORS = {
   shadow: '#000000'
 };
 
-const AutoExpandingTextInput = ({ style, ...props }: any) => {
-  const [height, setHeight] = useState(40);
-  return (
-    <TextInput
-      {...props}
-      multiline
-      scrollEnabled={false}
-      style={[style, { height: Math.max(40, height) }]}
-      onContentSizeChange={(e) => {
-        if (e.nativeEvent?.contentSize?.height) {
-          setHeight(e.nativeEvent.contentSize.height);
-        }
-      }}
-    />
-  );
-};
-
 export default function MemoApp() {
   const uploadToStorage = async (uri: string, folder: string) => {
     try {
-      let fileData: any;
-      let contentType = 'application/octet-stream';
-      let ext = 'png';
-      
-      if (uri.includes('.')) {
-        const parts = uri.split('.');
-        const possibleExt = parts[parts.length - 1].toLowerCase();
-        if (possibleExt.length <= 4) {
-          ext = possibleExt;
-        }
-      }
-
-      if (ext === 'png') contentType = 'image/png';
-      else if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
-      else if (ext === 'pdf') contentType = 'application/pdf';
-
-      if (Platform.OS === 'web') {
-        const response = await fetch(uri);
-        fileData = await response.blob();
-        if (fileData.type) {
-          contentType = fileData.type;
-          ext = contentType.split('/')[1] || ext;
-        }
-      } else {
-        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-        fileData = decode(base64);
-      }
-
-      // sanitize ext
-      ext = ext.replace(/[^a-zA-Z0-9]/g, '');
-      if (!ext) ext = 'png';
-
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const ext = uri.split('.').pop() || 'png';
       const path = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
-      const { error } = await supabase.storage.from('memo-assets').upload(path, fileData, {
-        contentType
-      });
+      const { error } = await supabase.storage.from('memo-assets').upload(path, blob);
       if (error) throw error;
       const { data } = supabase.storage.from('memo-assets').getPublicUrl(path);
       return data.publicUrl;
@@ -151,20 +100,20 @@ export default function MemoApp() {
 
   const [items, setItems] = useState<Item[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const skipNextSave = useRef(false);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([{ id: null, title: 'メモ帳' }]);
   const [isFabOpen, setIsFabOpen] = useState(false);
 
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
 
   const [dragDelaySec, setDragDelaySec] = useState(0.5);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
-  const [attachmentMenu, setAttachmentMenu] = useState<{ id: string, type: 'image' | 'file', uri: string, fileName?: string | null } | null>(null);
 
   // Reanimated values for FAB
   const fabRotation = useSharedValue(0);
@@ -197,68 +146,75 @@ export default function MemoApp() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
   };
 
-  const loadData = async () => {
-    setIsLoaded(false);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setIsLoaded(true);
-        return;
-      }
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setIsLoaded(true);
+          return;
+        }
 
-      const { data: dbData, error } = await supabase.from('memos').select('*').eq('user_id', user.id);
-      if (error) throw error;
+        const { data: dbData, error } = await supabase.from('memos').select('*').eq('user_id', user.id);
+        if (error) throw error;
 
-      let loadedItems: Item[] = [];
-      if (dbData && dbData.length > 0) {
-        loadedItems = dbData.map(mapFromDB);
-      }
+        let loadedItems: Item[] = [];
+        if (dbData && dbData.length > 0) {
+          loadedItems = dbData.map(mapFromDB);
+        }
 
-      const savedData = await AsyncStorage.getItem('my_memo_data');
-      if (savedData) {
-        const parsed: Item[] = JSON.parse(savedData);
-        const migratedFlag = await AsyncStorage.getItem('my_memo_data_migrated');
-        if (!migratedFlag && parsed.length > 0) {
-          const upsertData = parsed.map(item => mapToDB(item, user.id));
-          const { error: upsertError } = await supabase.from('memos').upsert(upsertData);
-          if (!upsertError) {
-            await AsyncStorage.setItem('my_memo_data_migrated', 'true');
-            const existingIds = new Set(loadedItems.map(i => i.id));
-            const missingLocals = parsed.filter(i => !existingIds.has(i.id));
-            loadedItems = [...loadedItems, ...missingLocals];
+        const savedData = await AsyncStorage.getItem('my_memo_data');
+        if (savedData) {
+          const parsed: Item[] = JSON.parse(savedData);
+          const migratedFlag = await AsyncStorage.getItem('my_memo_data_migrated');
+          if (!migratedFlag && parsed.length > 0) {
+            const upsertData = parsed.map(item => mapToDB(item, user.id));
+            const { error: upsertError } = await supabase.from('memos').upsert(upsertData);
+            if (!upsertError) {
+              await AsyncStorage.setItem('my_memo_data_migrated', 'true');
+              const existingIds = new Set(loadedItems.map(i => i.id));
+              const missingLocals = parsed.filter(i => !existingIds.has(i.id));
+              loadedItems = [...loadedItems, ...missingLocals];
+            }
           }
         }
+
+        if (loadedItems.length === 0) {
+          loadedItems = [
+            { id: Date.now().toString() + '_1', parentId: null, type: 'folder', title: '新しいフォルダ', text: '', imageUri: null, fileUri: null, fileName: null },
+            { id: Date.now().toString() + '_2', parentId: null, type: 'folder', title: 'アイデア', text: '', imageUri: null, fileUri: null, fileName: null },
+          ];
+          const defaultData = loadedItems.map(item => mapToDB(item, user.id));
+          await supabase.from('memos').upsert(defaultData);
+        }
+
+        setItems(loadedItems);
+        skipNextSave.current = true; // 初回読み込み時のitems変更では自動保存をスキップ
+
+        const savedDelay = await AsyncStorage.getItem('dragDelaySec');
+        if (savedDelay !== null) {
+          setDragDelaySec(parseFloat(savedDelay));
+        }
+
+      } catch (error) {
+        console.error("読み込みエラー", error);
+        Alert.alert("エラー", "データの読み込みに失敗しました。再読み込みしてください。");
+      } finally {
+        setIsLoaded(true);
       }
-
-      if (loadedItems.length === 0) {
-        loadedItems = [
-          { id: '1', parentId: null, type: 'folder', title: '新しいフォルダ', text: '', imageUri: null, fileUri: null, fileName: null },
-          { id: '2', parentId: null, type: 'folder', title: 'アイデア', text: '', imageUri: null, fileUri: null, fileName: null },
-        ];
-        const defaultData = loadedItems.map(item => mapToDB(item, user.id));
-        await supabase.from('memos').upsert(defaultData);
-      }
-
-      setItems(loadedItems);
-
-      const savedDelay = await AsyncStorage.getItem('dragDelaySec');
-      if (savedDelay !== null) {
-        setDragDelaySec(parseFloat(savedDelay));
-      }
-
-    } catch (error) {
-      console.error("読み込みエラー", error);
-    } finally {
-      setIsLoaded(true);
-    }
-  };
-
-  useEffect(() => {
+    };
     loadData();
   }, []);
 
   useEffect(() => {
     if (!isLoaded || items.length === 0) return;
+    
+    // fetch完了直後のステート更新による意図しない上書き保存を防ぐ
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+
     const timer = setTimeout(async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -283,7 +239,7 @@ export default function MemoApp() {
     setHistory([...history, { id: folder.id, title: folder.title }]);
     setIsSelectMode(false);
     setSelectedIds([]);
-    setEditingItemId(null);
+    setEditingFolderId(null);
   };
 
   const goBack = () => {
@@ -295,7 +251,7 @@ export default function MemoApp() {
       setCurrentParentId(newHistory[newHistory.length - 1].id);
       setIsSelectMode(false);
       setSelectedIds([]);
-      setEditingItemId(null);
+      setEditingFolderId(null);
     }
   };
 
@@ -316,7 +272,9 @@ export default function MemoApp() {
     };
     setItems(prev => [...prev, newItem]);
 
-    setEditingItemId(newId);
+    if (type === 'folder') {
+      setEditingFolderId(newId);
+    }
   };
 
   const updateItem = (id: string, updates: Partial<Item>) => {
@@ -448,34 +406,11 @@ export default function MemoApp() {
   };
 
   const openFile = async (uri: string) => {
-    try {
-      if (uri.startsWith('http')) {
-        await Linking.openURL(uri);
-      } else {
-        const isAvailable = await Sharing.isAvailableAsync();
-        if (isAvailable) {
-          await Sharing.shareAsync(uri);
-        } else {
-          Alert.alert('エラー', 'このデバイスではファイルを開けません');
-        }
-      }
-    } catch (error) {
-      Alert.alert('エラー', 'ファイルを開けませんでした');
-    }
-  };
-
-  const downloadAttachment = async (uri: string, fileName?: string | null) => {
-    if (!uri) return;
-    if (Platform.OS === 'web') {
-      const a = document.createElement('a');
-      a.href = uri;
-      a.download = fileName || 'download';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (isAvailable) {
+      await Sharing.shareAsync(uri);
     } else {
-      await Linking.openURL(uri);
+      Alert.alert('エラー', 'このデバイスではファイルを開けません');
     }
   };
 
@@ -484,29 +419,12 @@ export default function MemoApp() {
     setItems([...otherItems, ...data]);
   };
 
-  const moveItem = (index: number, direction: 'up' | 'down') => {
-    const currentList = [...currentItems];
-    if (direction === 'up' && index > 0) {
-      const temp = currentList[index];
-      currentList[index] = currentList[index - 1];
-      currentList[index - 1] = temp;
-    } else if (direction === 'down' && index < currentList.length - 1) {
-      const temp = currentList[index];
-      currentList[index] = currentList[index + 1];
-      currentList[index + 1] = temp;
-    } else {
-      return;
-    }
-    const otherItems = items.filter(item => item.parentId !== currentParentId);
-    setItems([...otherItems, ...currentList]);
-  };
-
-  const renderItem = ({ item, drag, isActive, index, getIndex }: any) => {
-    const currentIndex = getIndex ? getIndex() : index;
-    const isEditing = editingItemId === item.id;
+  const renderItem = ({ item, drag, isActive }: any) => {
+    const isEditing = editingFolderId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
-    const content = (
+    return (
+      <ScaleDecorator>
         <View style={[
           styles.itemCard,
           isActive && styles.itemCardActive,
@@ -551,7 +469,7 @@ export default function MemoApp() {
                     placeholder="無題のフォルダ"
                     placeholderTextColor={THEME_COLORS.textSecondary}
                     autoFocus
-                    onSubmitEditing={() => setEditingItemId(null)}
+                    onSubmitEditing={() => setEditingFolderId(null)}
                   />
                 ) : (
                   <Text style={[styles.folderText, !item.title && { color: THEME_COLORS.textSecondary }]}>
@@ -570,28 +488,17 @@ export default function MemoApp() {
                     />
                   </TouchableOpacity>
                 ) : isEditing ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(null)}>
+                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(null)}>
                     <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
                   </TouchableOpacity>
                 ) : (
                   <>
-                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    {Platform.OS === 'web' ? (
-                      <View style={{ flexDirection: 'row' }}>
-                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'up')} disabled={currentIndex === 0 || isThisItemMoving}>
-                           <MaterialIcons name="keyboard-arrow-up" size={24} color={currentIndex === 0 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'down')} disabled={currentIndex === currentItems.length - 1 || isThisItemMoving}>
-                           <MaterialIcons name="keyboard-arrow-down" size={24} color={currentIndex === currentItems.length - 1 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
-                        <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag}>
+                      <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
                   </>
                 )}
               </View>
@@ -601,22 +508,15 @@ export default function MemoApp() {
           {item.type === 'note' && (
             <View style={styles.noteContainer}>
               <View style={styles.noteHeader}>
-                {isEditing ? (
-                  <TextInput
-                    style={styles.noteTitleInput}
-                    value={item.title}
-                    onChangeText={(text) => updateItem(item.id, { title: text })}
-                    placeholder="タイトル"
-                    placeholderTextColor={THEME_COLORS.textSecondary}
-                    selectionColor={THEME_COLORS.blue}
-                    editable={!isSelectMode && !isThisItemMoving}
-                    autoFocus={!item.title}
-                  />
-                ) : (
-                  <Text style={[styles.noteTitleInput, { paddingVertical: Platform.OS === 'web' ? 4 : 0 }, !item.title && { color: THEME_COLORS.textSecondary }]}>
-                    {item.title || "タイトル"}
-                  </Text>
-                )}
+                <TextInput
+                  style={styles.noteTitleInput}
+                  value={item.title}
+                  onChangeText={(text) => updateItem(item.id, { title: text })}
+                  placeholder="タイトル"
+                  placeholderTextColor={THEME_COLORS.textSecondary}
+                  selectionColor={THEME_COLORS.blue}
+                  editable={!isSelectMode && !isThisItemMoving}
+                />
 
                 {isSelectMode ? (
                   <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
@@ -626,122 +526,69 @@ export default function MemoApp() {
                       color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
                     />
                   </TouchableOpacity>
-                ) : isEditing ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(null)}>
-                    <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
-                  </TouchableOpacity>
                 ) : (
-                  <>
-                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingItemId(item.id)}>
-                      <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
-                    </TouchableOpacity>
-                    {Platform.OS === 'web' ? (
-                      <View style={{ flexDirection: 'row' }}>
-                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'up')} disabled={currentIndex === 0 || isThisItemMoving}>
-                           <MaterialIcons name="keyboard-arrow-up" size={24} color={currentIndex === 0 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.iconButton, { paddingHorizontal: 4 }]} onPress={() => moveItem(currentIndex, 'down')} disabled={currentIndex === currentItems.length - 1 || isThisItemMoving}>
-                           <MaterialIcons name="keyboard-arrow-down" size={24} color={currentIndex === currentItems.length - 1 ? '#E5E7EB' : THEME_COLORS.textSecondary} />
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
-                        <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
-                      </TouchableOpacity>
-                    )}
-                  </>
+                  <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
+                    <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                  </TouchableOpacity>
                 )}
               </View>
 
-              {isEditing ? (
-                <AutoExpandingTextInput
-                  style={styles.noteInput}
-                  value={item.text}
-                  onChangeText={(text: string) => updateItem(item.id, { text: text })}
-                  placeholder="メモを入力..."
-                  placeholderTextColor={THEME_COLORS.textSecondary}
-                  selectionColor={THEME_COLORS.blue}
-                  editable={!isSelectMode && !isThisItemMoving}
-                  autoFocus
-                />
-              ) : (
-                <Text style={[styles.noteInput, { paddingVertical: Platform.OS === 'web' ? 8 : 0 }, !item.text && { color: THEME_COLORS.textSecondary }]}>
-                  {item.text || "メモを入力..."}
-                </Text>
-              )}
+              <TextInput
+                style={styles.noteInput}
+                value={item.text}
+                onChangeText={(text) => updateItem(item.id, { text: text })}
+                placeholder="メモを入力..."
+                placeholderTextColor={THEME_COLORS.textSecondary}
+                multiline
+                selectionColor={THEME_COLORS.blue}
+                editable={!isSelectMode && !isThisItemMoving}
+              />
 
               {item.imageUri && (
-                <View style={styles.attachmentWrapper}>
-                  <TouchableOpacity
-                    style={[styles.attachmentContainer, { marginTop: 0 }]}
-                    onPress={() => !isSelectMode && openFile(item.imageUri!)}
-                    activeOpacity={isSelectMode ? 1 : 0.7}
-                    disabled={isThisItemMoving}
-                  >
-                    <Image
-                      source={{ uri: item.imageUri }}
-                      style={[
-                        styles.image,
-                        item.imageWidth && item.imageHeight
-                          ? { aspectRatio: item.imageWidth / item.imageHeight }
-                          : { height: 200 }
-                      ]}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-                  {!isSelectMode && !isThisItemMoving && isEditing && (
-                    <TouchableOpacity
-                      style={styles.deleteAttachmentButton}
-                      onPress={() => setAttachmentMenu({ id: item.id, type: 'image', uri: item.imageUri! })}
-                    >
-                      <MaterialIcons name="more-vert" size={20} color="#FFF" />
-                    </TouchableOpacity>
-                  )}
+                <View style={styles.attachmentContainer}>
+                  <Image
+                    source={{ uri: item.imageUri }}
+                    style={[
+                      styles.image,
+                      item.imageWidth && item.imageHeight
+                        ? { aspectRatio: item.imageWidth / item.imageHeight }
+                        : { height: 200 }
+                    ]}
+                    resizeMode="cover"
+                  />
                 </View>
               )}
 
               {item.fileName && (
-                <View style={styles.attachmentWrapper}>
-                  <TouchableOpacity
-                    style={[styles.fileCard, { marginTop: 0 }]}
-                    onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
-                    activeOpacity={isSelectMode ? 1 : 0.7}
-                    disabled={isThisItemMoving}
-                  >
-                    <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
-                    <View style={styles.fileInfo}>
-                      <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
-                        {item.fileName}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  {!isSelectMode && !isThisItemMoving && isEditing && (
-                    <TouchableOpacity
-                      style={styles.deleteAttachmentButton}
-                      onPress={() => setAttachmentMenu({ id: item.id, type: 'file', uri: item.fileUri!, fileName: item.fileName })}
-                    >
-                      <MaterialIcons name="more-vert" size={20} color="#FFF" />
-                    </TouchableOpacity>
-                  )}
-                </View>
+                <TouchableOpacity
+                  style={styles.fileCard}
+                  onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
+                  activeOpacity={isSelectMode ? 1 : 0.7}
+                  disabled={isThisItemMoving}
+                >
+                  <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
+                  <View style={styles.fileInfo}>
+                    <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
+                      {item.fileName}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               )}
 
-              {isEditing && (
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
-                    <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                    <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
-                      {item.imageUri ? "画像変更" : "画像"}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
-                    <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                    <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
-                      {item.fileName ? "ファイル変更" : "ファイル"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              <View style={styles.actionRow}>
+                <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
+                  <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                  <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
+                    {item.imageUri ? "画像変更" : "画像"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
+                  <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                  <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
+                    {item.fileName ? "ファイル変更" : "ファイル"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
@@ -756,33 +603,23 @@ export default function MemoApp() {
             />
           )}
         </View>
+      </ScaleDecorator>
     );
-
-    if (Platform.OS === 'web') return content;
-    return <ScaleDecorator>{content}</ScaleDecorator>;
   };
 
   if (!isLoaded) {
     return <View style={styles.loading}><ActivityIndicator size="large" color={THEME_COLORS.blue} /></View>;
   }
 
-  const RootWrapper = Platform.OS === 'web' ? View : GestureHandlerRootView;
-
   return (
-    <RootWrapper style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <Stack.Screen
           options={{
-            headerTitle: () => (
-              <TouchableOpacity onPress={loadData} activeOpacity={0.6}>
-                <Text style={{ fontWeight: '700', fontSize: 20, color: THEME_COLORS.textMain }}>
-                  {isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle}
-                </Text>
-              </TouchableOpacity>
-            ),
+            headerTitle: isSelectMode ? `${selectedIds.length}件選択` : isMoving ? '移動先の選択' : currentTitle,
             headerBackVisible: false,
             headerLeft: () => isSelectMode ? (
               <TouchableOpacity onPress={() => { animateLayout(); setIsSelectMode(false); setSelectedIds([]); }} style={styles.headerButton}>
@@ -818,37 +655,22 @@ export default function MemoApp() {
           }}
         />
 
-        {Platform.OS === 'web' ? (
-          <FlatList
-            data={currentItems}
-            keyExtractor={(item: any) => item.id}
-            renderItem={(props: any) => renderItem({ ...props, drag: () => {}, isActive: false })}
-            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-                <Text style={styles.emptyText}>この階層には何もありません</Text>
-              </View>
-            }
-          />
-        ) : (
-          <DraggableFlatList
-            data={currentItems}
-            onDragEnd={onDragEnd}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            activationDistance={20}
-            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-                <Text style={styles.emptyText}>この階層には何もありません</Text>
-              </View>
-            }
-          />
-        )}
+        <DraggableFlatList
+          data={currentItems}
+          onDragEnd={onDragEnd}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+          showsVerticalScrollIndicator={false}
+          dragHitSlop={{ top: 0, left: 0, bottom: 0, right: 0 }}
+          activationDistance={isSelectMode ? 999 : 10}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+              <Text style={styles.emptyText}>この階層には何もありません</Text>
+            </View>
+          }
+        />
 
         {isMoving && (
           <View style={styles.moveBanner}>
@@ -950,56 +772,8 @@ export default function MemoApp() {
           </TouchableOpacity>
         </Modal>
 
-        <Modal visible={!!attachmentMenu} transparent animationType="fade">
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setAttachmentMenu(null)}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.actionSheet}>
-              <Text style={styles.actionSheetTitle}>添付ファイルの操作</Text>
-              
-              <TouchableOpacity style={styles.actionSheetButton} onPress={() => {
-                if (attachmentMenu) downloadAttachment(attachmentMenu.uri, attachmentMenu.fileName);
-                setAttachmentMenu(null);
-              }}>
-                <MaterialIcons name="file-download" size={22} color={THEME_COLORS.blue} />
-                <Text style={styles.actionSheetButtonText}>ダウンロード</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.actionSheetButton} onPress={() => {
-                if (attachmentMenu) {
-                  const executeDelete = () => {
-                    if (attachmentMenu.type === 'image') {
-                      updateItem(attachmentMenu.id, { imageUri: null, imageWidth: null, imageHeight: null });
-                    } else {
-                      updateItem(attachmentMenu.id, { fileUri: null, fileName: null });
-                    }
-                  };
-                  if (Platform.OS === 'web') {
-                    if (window.confirm("この添付を削除しますか？")) executeDelete();
-                  } else {
-                    Alert.alert(
-                      attachmentMenu.type === 'image' ? "画像の削除" : "ファイルの削除",
-                      "この添付を削除してもよろしいですか？",
-                      [
-                        { text: "キャンセル", style: "cancel" },
-                        { text: "削除", style: "destructive", onPress: executeDelete }
-                      ]
-                    );
-                  }
-                }
-                setAttachmentMenu(null);
-              }}>
-                <MaterialIcons name="delete" size={22} color={THEME_COLORS.red} />
-                <Text style={[styles.actionSheetButtonText, { color: THEME_COLORS.red }]}>削除</Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
-
       </KeyboardAvoidingView>
-    </RootWrapper>
+    </GestureHandlerRootView>
   );
 }
 
@@ -1106,27 +880,6 @@ const styles = StyleSheet.create({
     padding: 0,
   },
 
-  attachmentWrapper: {
-    position: 'relative',
-    marginTop: 16,
-  },
-  deleteAttachmentButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    backgroundColor: THEME_COLORS.textMain,
-    borderRadius: 16,
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-    zIndex: 10,
-  },
   attachmentContainer: {
     marginTop: 16,
     borderRadius: 16,
@@ -1283,40 +1036,6 @@ const styles = StyleSheet.create({
   closeSettingsText: {
     fontSize: 16,
     fontWeight: '700',
-    color: THEME_COLORS.textMain,
-  },
-
-  actionSheet: {
-    backgroundColor: THEME_COLORS.surface,
-    width: '90%',
-    maxWidth: 400,
-    borderRadius: 24,
-    paddingVertical: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  actionSheetTitle: {
-    fontSize: 14,
-    color: THEME_COLORS.textSecondary,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  actionSheetButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    gap: 16,
-  },
-  actionSheetButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
     color: THEME_COLORS.textMain,
   },
 
