@@ -37,11 +37,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
-
-import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -418,22 +415,53 @@ export default function MemoApp() {
     }
   };
 
-  const onDragEnd = ({ data }: any) => {
-    const otherItems = items.filter(item => item.parentId !== currentParentId);
-    setItems([...otherItems, ...data]);
+  const moveItemUp = (id: string) => {
+    animateLayout();
+    setItems(prev => {
+      const currentParentItems = prev.filter(item => item.parentId === currentParentId);
+      const currentIdx = currentParentItems.findIndex(item => item.id === id);
+      if (currentIdx <= 0) return prev;
+      const targetId = currentParentItems[currentIdx - 1].id;
+      
+      const idx1 = prev.findIndex(item => item.id === id);
+      const idx2 = prev.findIndex(item => item.id === targetId);
+      
+      const newItems = [...prev];
+      const temp = newItems[idx1];
+      newItems[idx1] = newItems[idx2];
+      newItems[idx2] = temp;
+      return newItems;
+    });
   };
 
-  const renderItem = ({ item, drag, isActive }: any) => {
+  const moveItemDown = (id: string) => {
+    animateLayout();
+    setItems(prev => {
+      const currentParentItems = prev.filter(item => item.parentId === currentParentId);
+      const currentIdx = currentParentItems.findIndex(item => item.id === id);
+      if (currentIdx === -1 || currentIdx >= currentParentItems.length - 1) return prev;
+      const targetId = currentParentItems[currentIdx + 1].id;
+      
+      const idx1 = prev.findIndex(item => item.id === id);
+      const idx2 = prev.findIndex(item => item.id === targetId);
+      
+      const newItems = [...prev];
+      const temp = newItems[idx1];
+      newItems[idx1] = newItems[idx2];
+      newItems[idx2] = temp;
+      return newItems;
+    });
+  };
+
+  const renderItem = ({ item }: any) => {
     const isEditing = editingFolderId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
     return (
-      <ScaleDecorator>
-        <View style={[
-          styles.itemCard,
-          isActive && styles.itemCardActive,
-          isThisItemMoving && { opacity: 0.4 }
-        ]}>
+      <View style={[
+        styles.itemCard,
+        isThisItemMoving && { opacity: 0.4 }
+      ]}>
 
           {item.type === 'folder' && (
             <View style={styles.folderContainer}>
@@ -500,8 +528,11 @@ export default function MemoApp() {
                     <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag}>
-                      <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
+                    <TouchableOpacity style={styles.iconButton} onPress={() => moveItemUp(item.id)}>
+                      <MaterialIcons name="arrow-upward" size={24} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => moveItemDown(item.id)}>
+                      <MaterialIcons name="arrow-downward" size={24} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
                   </>
                 )}
@@ -531,9 +562,14 @@ export default function MemoApp() {
                     />
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity style={styles.iconButton} delayLongPress={dragDelaySec * 1000} onLongPress={drag} disabled={isThisItemMoving}>
-                    <MaterialIcons name="drag-indicator" size={24} color={THEME_COLORS.textSecondary} />
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row' }}>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
+                      <MaterialIcons name="arrow-upward" size={24} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.iconButton} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
+                      <MaterialIcons name="arrow-downward" size={24} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
 
@@ -544,6 +580,7 @@ export default function MemoApp() {
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 multiline
+                scrollEnabled={false}
                 selectionColor={THEME_COLORS.blue}
                 editable={!isSelectMode && !isThisItemMoving}
               />
@@ -607,7 +644,6 @@ export default function MemoApp() {
             />
           )}
         </View>
-      </ScaleDecorator>
     );
   };
 
@@ -616,7 +652,7 @@ export default function MemoApp() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <View style={{ flex: 1 }}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -659,15 +695,12 @@ export default function MemoApp() {
           }}
         />
 
-        <DraggableFlatList
+        <FlatList
           data={currentItems}
-          onDragEnd={onDragEnd}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
           showsVerticalScrollIndicator={false}
-          dragHitSlop={{ top: 0, left: 0, bottom: 0, right: 0 }}
-          activationDistance={isSelectMode ? 999 : 10}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
@@ -777,7 +810,7 @@ export default function MemoApp() {
         </Modal>
 
       </KeyboardAvoidingView>
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
