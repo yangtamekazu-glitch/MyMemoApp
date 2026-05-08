@@ -98,6 +98,7 @@ export default function MemoApp() {
   const [items, setItems] = useState<Item[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [inputHeights, setInputHeights] = useState<Record<string, number>>({});
   const isReadyForAutoSave = useRef(false);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([{ id: null, title: 'メモ帳' }]);
@@ -584,9 +585,15 @@ export default function MemoApp() {
               </View>
 
               <TextInput
-                style={styles.noteInput}
+                style={[styles.noteInput, { height: Math.max(78, inputHeights[item.id] || 78) }]}
                 value={item.text}
                 onChangeText={(text) => updateItem(item.id, { text: text })}
+                onContentSizeChange={(e) => {
+                  setInputHeights(prev => ({
+                    ...prev,
+                    [item.id]: e.nativeEvent.contentSize.height
+                  }));
+                }}
                 placeholder="メモを入力..."
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 multiline
@@ -695,9 +702,18 @@ export default function MemoApp() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity onPress={() => { animateLayout(); setIsSelectMode(true); }} style={styles.headerButton}>
-                <MaterialIcons name="checklist" size={26} color={THEME_COLORS.blue} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={refreshing}>
+                  {refreshing ? (
+                    <ActivityIndicator size="small" color={THEME_COLORS.blue} style={{ width: 26, height: 26 }} />
+                  ) : (
+                    <MaterialIcons name="refresh" size={26} color={THEME_COLORS.blue} />
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { animateLayout(); setIsSelectMode(true); }} style={styles.headerButton}>
+                  <MaterialIcons name="checklist" size={26} color={THEME_COLORS.blue} />
+                </TouchableOpacity>
+              </View>
             ),
             headerStyle: { backgroundColor: THEME_COLORS.background },
             headerTintColor: THEME_COLORS.textMain,
