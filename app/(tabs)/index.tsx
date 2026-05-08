@@ -36,9 +36,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -161,6 +161,23 @@ export default function MemoApp() {
         loadedItems = dbData.map(mapFromDB);
       }
 
+      const savedOrderStr = await AsyncStorage.getItem('my_memo_order');
+      if (savedOrderStr) {
+        try {
+          const savedOrder: string[] = JSON.parse(savedOrderStr);
+          loadedItems.sort((a, b) => {
+            const indexA = savedOrder.indexOf(a.id);
+            const indexB = savedOrder.indexOf(b.id);
+            if (indexA === -1 && indexB === -1) return 0;
+            if (indexA === -1) return 1;
+            if (indexB === -1) return -1;
+            return indexA - indexB;
+          });
+        } catch(e) {
+          console.error("Order parse error:", e);
+        }
+      }
+
       const savedData = await AsyncStorage.getItem('my_memo_data');
       if (savedData) {
         const parsed: Item[] = JSON.parse(savedData);
@@ -210,6 +227,38 @@ export default function MemoApp() {
     loadData();
   }, []);
 
+  const handleSave = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const upsertData = items.map(item => mapToDB(item, user.id));
+        const { error } = await supabase.from('memos').upsert(upsertData);
+        if (error) throw error;
+        
+        await AsyncStorage.setItem('my_memo_order', JSON.stringify(items.map(i => i.id)));
+        
+        if (Platform.OS === 'web') {
+          window.alert("現在のメモと配置を保存しました。");
+        } else {
+          Alert.alert("保存完了", "現在のメモと配置を保存しました。");
+        }
+      } else {
+        if (Platform.OS === 'web') {
+          window.alert("ログインしていません");
+        } else {
+          Alert.alert("エラー", "ログインしていません");
+        }
+      }
+    } catch (err) {
+      console.error("Save failed:", err);
+      if (Platform.OS === 'web') {
+        window.alert("保存に失敗しました。");
+      } else {
+        Alert.alert("エラー", "保存に失敗しました。");
+      }
+    }
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
@@ -227,6 +276,7 @@ export default function MemoApp() {
           const upsertData = items.map(item => mapToDB(item, user.id));
           const { error } = await supabase.from('memos').upsert(upsertData);
           if (error) console.error("Save Error:", error);
+          await AsyncStorage.setItem('my_memo_order', JSON.stringify(items.map(i => i.id)));
         }
       } catch (err) {
         console.error("Auto-save failed:", err);
@@ -431,10 +481,10 @@ export default function MemoApp() {
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx <= 0) return prev;
       const targetId = currentParentItems[currentIdx - 1].id;
-      
+
       const idx1 = prev.findIndex(item => item.id === id);
       const idx2 = prev.findIndex(item => item.id === targetId);
-      
+
       const newItems = [...prev];
       const temp = newItems[idx1];
       newItems[idx1] = newItems[idx2];
@@ -450,10 +500,10 @@ export default function MemoApp() {
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx === -1 || currentIdx >= currentParentItems.length - 1) return prev;
       const targetId = currentParentItems[currentIdx + 1].id;
-      
+
       const idx1 = prev.findIndex(item => item.id === id);
       const idx2 = prev.findIndex(item => item.id === targetId);
-      
+
       const newItems = [...prev];
       const temp = newItems[idx1];
       newItems[idx1] = newItems[idx2];
@@ -472,196 +522,196 @@ export default function MemoApp() {
         isThisItemMoving && { opacity: 0.4 }
       ]}>
 
-          {item.type === 'folder' && (
-            <View style={styles.folderContainer}>
-              <TouchableOpacity
-                style={styles.folderMainArea}
-                activeOpacity={isEditing ? 1 : 0.7}
-                disabled={isThisItemMoving}
-                onPress={() => {
-                  if (isSelectMode) toggleSelection(item.id);
-                  else if (!isEditing) goInside(item);
-                }}
-              >
-                <View style={styles.folderIconWrapper}>
-                  {item.folderIconUri ? (
-                    <Image source={{ uri: item.folderIconUri }} style={styles.customFolderIcon} />
-                  ) : (
-                    <MaterialIcons name="folder" size={40} color={THEME_COLORS.blue} style={{ opacity: 0.9 }} />
-                  )}
-                  {isEditing && (
-                    <>
-                      <View style={styles.editIconBadge}>
-                        <MaterialIcons name="camera-alt" size={12} color="#FFF" />
-                      </View>
-                      <TouchableOpacity
-                        style={StyleSheet.absoluteFillObject}
-                        onPress={() => pickFolderIcon(item.id)}
-                      />
-                    </>
-                  )}
-                </View>
-
-                {isEditing ? (
-                  <TextInput
-                    style={styles.folderInput}
-                    value={item.title}
-                    onChangeText={(text) => updateItem(item.id, { title: text })}
-                    placeholder="無題のフォルダ"
-                    placeholderTextColor={THEME_COLORS.textSecondary}
-                    autoFocus
-                    onSubmitEditing={() => setEditingFolderId(null)}
-                  />
+        {item.type === 'folder' && (
+          <View style={styles.folderContainer}>
+            <TouchableOpacity
+              style={styles.folderMainArea}
+              activeOpacity={isEditing ? 1 : 0.7}
+              disabled={isThisItemMoving}
+              onPress={() => {
+                if (isSelectMode) toggleSelection(item.id);
+                else if (!isEditing) goInside(item);
+              }}
+            >
+              <View style={styles.folderIconWrapper}>
+                {item.folderIconUri ? (
+                  <Image source={{ uri: item.folderIconUri }} style={styles.customFolderIcon} />
                 ) : (
-                  <Text style={[styles.folderText, !item.title && { color: THEME_COLORS.textSecondary }]}>
-                    {item.title || "無題のフォルダ"}
-                  </Text>
+                  <MaterialIcons name="folder" size={40} color={THEME_COLORS.blue} style={{ opacity: 0.9 }} />
                 )}
-              </TouchableOpacity>
-
-              <View style={styles.folderActionArea}>
-                {isSelectMode ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
-                    <MaterialIcons
-                      name={selectedIds.includes(item.id) ? "check-circle" : "radio-button-unchecked"}
-                      size={28}
-                      color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
-                    />
-                  </TouchableOpacity>
-                ) : isEditing ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(null)}>
-                    <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
-                  </TouchableOpacity>
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: -8 }}>
-                    <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
-                      <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
-                    </TouchableOpacity>
-                    <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
-                      <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)}>
-                        <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
-                      </TouchableOpacity>
-                      <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)}>
-                        <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
-                      </TouchableOpacity>
+                {isEditing && (
+                  <>
+                    <View style={styles.editIconBadge}>
+                      <MaterialIcons name="camera-alt" size={12} color="#FFF" />
                     </View>
-                  </View>
+                    <TouchableOpacity
+                      style={StyleSheet.absoluteFillObject}
+                      onPress={() => pickFolderIcon(item.id)}
+                    />
+                  </>
                 )}
               </View>
-            </View>
-          )}
 
-          {item.type === 'note' && (
-            <View style={styles.noteContainer}>
-              <View style={styles.noteHeader}>
+              {isEditing ? (
                 <TextInput
-                  style={styles.noteTitleInput}
+                  style={styles.folderInput}
                   value={item.title}
                   onChangeText={(text) => updateItem(item.id, { title: text })}
-                  placeholder="タイトル"
+                  placeholder="無題のフォルダ"
                   placeholderTextColor={THEME_COLORS.textSecondary}
-                  selectionColor={THEME_COLORS.blue}
-                  editable={!isSelectMode && !isThisItemMoving}
+                  autoFocus
+                  onSubmitEditing={() => setEditingFolderId(null)}
                 />
+              ) : (
+                <Text style={[styles.folderText, !item.title && { color: THEME_COLORS.textSecondary }]}>
+                  {item.title || "無題のフォルダ"}
+                </Text>
+              )}
+            </TouchableOpacity>
 
-                {isSelectMode ? (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
-                    <MaterialIcons
-                      name={selectedIds.includes(item.id) ? "check-circle" : "radio-button-unchecked"}
-                      size={28}
-                      color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
-                    />
+            <View style={styles.folderActionArea}>
+              {isSelectMode ? (
+                <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
+                  <MaterialIcons
+                    name={selectedIds.includes(item.id) ? "check-circle" : "radio-button-unchecked"}
+                    size={28}
+                    color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
+                  />
+                </TouchableOpacity>
+              ) : isEditing ? (
+                <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(null)}>
+                  <MaterialIcons name="check" size={26} color={THEME_COLORS.green} />
+                </TouchableOpacity>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: -8 }}>
+                  <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
+                    <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                   </TouchableOpacity>
-                ) : (
-                  <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginRight: -4 }}>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
+                  <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
+                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)}>
                       <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
+                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)}>
                       <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
                   </View>
-                )}
-              </View>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
 
+        {item.type === 'note' && (
+          <View style={styles.noteContainer}>
+            <View style={styles.noteHeader}>
               <TextInput
-                style={[styles.noteInput, { height: Math.max(78, inputHeights[item.id] || 78) }]}
-                value={item.text}
-                onChangeText={(text) => updateItem(item.id, { text: text })}
-                onContentSizeChange={(e) => {
-                  setInputHeights(prev => ({
-                    ...prev,
-                    [item.id]: e.nativeEvent.contentSize.height
-                  }));
-                }}
-                placeholder="メモを入力..."
+                style={styles.noteTitleInput}
+                value={item.title}
+                onChangeText={(text) => updateItem(item.id, { title: text })}
+                placeholder="タイトル"
                 placeholderTextColor={THEME_COLORS.textSecondary}
-                multiline
-                numberOfLines={3}
-                scrollEnabled={false}
                 selectionColor={THEME_COLORS.blue}
                 editable={!isSelectMode && !isThisItemMoving}
               />
 
-              {item.imageUri && (
-                <View style={styles.attachmentContainer}>
-                  <Image
-                    source={{ uri: item.imageUri }}
-                    style={[
-                      styles.image,
-                      item.imageWidth && item.imageHeight
-                        ? { aspectRatio: item.imageWidth / item.imageHeight }
-                        : { height: 200 }
-                    ]}
-                    resizeMode="cover"
+              {isSelectMode ? (
+                <TouchableOpacity style={styles.iconButton} onPress={() => toggleSelection(item.id)}>
+                  <MaterialIcons
+                    name={selectedIds.includes(item.id) ? "check-circle" : "radio-button-unchecked"}
+                    size={28}
+                    color={selectedIds.includes(item.id) ? THEME_COLORS.blue : '#D1D5DB'}
                   />
+                </TouchableOpacity>
+              ) : (
+                <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginRight: -4 }}>
+                  <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
+                    <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
+                    <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
+                  </TouchableOpacity>
                 </View>
               )}
-
-              {item.fileName && (
-                <TouchableOpacity
-                  style={styles.fileCard}
-                  onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
-                  activeOpacity={isSelectMode ? 1 : 0.7}
-                  disabled={isThisItemMoving}
-                >
-                  <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
-                  <View style={styles.fileInfo}>
-                    <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
-                      {item.fileName}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
-                  <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                  <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
-                    {item.imageUri ? "画像変更" : "画像"}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
-                  <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
-                  <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
-                    {item.fileName ? "ファイル変更" : "ファイル"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
             </View>
-          )}
 
-          {isSelectMode && (
-            <TouchableOpacity
-              style={[
-                StyleSheet.absoluteFillObject,
-                { zIndex: 10, borderRadius: 20, backgroundColor: selectedIds.includes(item.id) ? 'rgba(0, 122, 255, 0.05)' : 'transparent' }
-              ]}
-              activeOpacity={0.5}
-              onPress={() => toggleSelection(item.id)}
+            <TextInput
+              style={[styles.noteInput, { height: Math.max(78, inputHeights[item.id] || 78) }]}
+              value={item.text}
+              onChangeText={(text) => updateItem(item.id, { text: text })}
+              onContentSizeChange={(e) => {
+                setInputHeights(prev => ({
+                  ...prev,
+                  [item.id]: e.nativeEvent.contentSize.height
+                }));
+              }}
+              placeholder="メモを入力..."
+              placeholderTextColor={THEME_COLORS.textSecondary}
+              multiline
+              numberOfLines={3}
+              scrollEnabled={false}
+              selectionColor={THEME_COLORS.blue}
+              editable={!isSelectMode && !isThisItemMoving}
             />
-          )}
-        </View>
+
+            {item.imageUri && (
+              <View style={styles.attachmentContainer}>
+                <Image
+                  source={{ uri: item.imageUri }}
+                  style={[
+                    styles.image,
+                    item.imageWidth && item.imageHeight
+                      ? { aspectRatio: item.imageWidth / item.imageHeight }
+                      : { height: 200 }
+                  ]}
+                  resizeMode="cover"
+                />
+              </View>
+            )}
+
+            {item.fileName && (
+              <TouchableOpacity
+                style={styles.fileCard}
+                onPress={() => item.fileUri && !isSelectMode && openFile(item.fileUri)}
+                activeOpacity={isSelectMode ? 1 : 0.7}
+                disabled={isThisItemMoving}
+              >
+                <MaterialIcons name="insert-drive-file" size={24} color={THEME_COLORS.blue} />
+                <View style={styles.fileInfo}>
+                  <Text style={styles.fileNameText} numberOfLines={1} ellipsizeMode="tail">
+                    {item.fileName}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={[styles.chipButton, item.imageUri && styles.chipButtonActive]} onPress={() => !isSelectMode && pickImage(item.id)} disabled={isThisItemMoving}>
+                <MaterialIcons name="image" size={18} color={item.imageUri ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                <Text style={[styles.chipText, item.imageUri && { color: THEME_COLORS.blue }]}>
+                  {item.imageUri ? "画像変更" : "画像"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.chipButton, item.fileName && styles.chipButtonActive]} onPress={() => !isSelectMode && pickDocument(item.id)} disabled={isThisItemMoving}>
+                <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
+                <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
+                  {item.fileName ? "ファイル変更" : "ファイル"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {isSelectMode && (
+          <TouchableOpacity
+            style={[
+              StyleSheet.absoluteFillObject,
+              { zIndex: 10, borderRadius: 20, backgroundColor: selectedIds.includes(item.id) ? 'rgba(0, 122, 255, 0.05)' : 'transparent' }
+            ]}
+            activeOpacity={0.5}
+            onPress={() => toggleSelection(item.id)}
+          />
+        )}
+      </View>
     );
   };
 
@@ -703,6 +753,9 @@ export default function MemoApp() {
               </View>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={handleSave} style={styles.headerButton}>
+                  <MaterialIcons name="save" size={26} color={THEME_COLORS.blue} />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={refreshing}>
                   {refreshing ? (
                     <ActivityIndicator size="small" color={THEME_COLORS.blue} style={{ width: 26, height: 26 }} />
