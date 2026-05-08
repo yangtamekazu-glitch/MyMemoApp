@@ -100,7 +100,7 @@ export default function MemoApp() {
 
   const [items, setItems] = useState<Item[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
-  const skipNextSave = useRef(false);
+  const isReadyForAutoSave = useRef(false);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([{ id: null, title: 'メモ帳' }]);
   const [isFabOpen, setIsFabOpen] = useState(false);
@@ -189,7 +189,11 @@ export default function MemoApp() {
         }
 
         setItems(loadedItems);
-        skipNextSave.current = true; // 初回読み込み時のitems変更では自動保存をスキップ
+
+        // 初期データセット完了後、ステートが安定するまで自動保存をロックする
+        setTimeout(() => {
+          isReadyForAutoSave.current = true;
+        }, 1000);
 
         const savedDelay = await AsyncStorage.getItem('dragDelaySec');
         if (savedDelay !== null) {
@@ -207,19 +211,19 @@ export default function MemoApp() {
   }, []);
 
   useEffect(() => {
-    if (!isLoaded || items.length === 0) return;
-    
-    // fetch完了直後のステート更新による意図しない上書き保存を防ぐ
-    if (skipNextSave.current) {
-      skipNextSave.current = false;
-      return;
-    }
+    // 初期ロード中、空データ、または自動保存ロック中は絶対に保存させない
+    if (!isLoaded || items.length === 0 || !isReadyForAutoSave.current) return;
 
     const timer = setTimeout(async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const upsertData = items.map(item => mapToDB(item, user.id));
-        await supabase.from('memos').upsert(upsertData);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const upsertData = items.map(item => mapToDB(item, user.id));
+          const { error } = await supabase.from('memos').upsert(upsertData);
+          if (error) console.error("Save Error:", error);
+        }
+      } catch (err) {
+        console.error("Auto-save failed:", err);
       }
     }, 2000);
     return () => clearTimeout(timer);
