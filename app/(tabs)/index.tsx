@@ -39,6 +39,7 @@ import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -110,6 +111,7 @@ export default function MemoApp() {
 
   const [dragDelaySec, setDragDelaySec] = useState(0.5);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDragMode, setIsDragMode] = useState(false);
 
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
@@ -512,15 +514,23 @@ export default function MemoApp() {
     });
   };
 
-  const renderItem = ({ item }: any) => {
+  const renderItem = ({ item, drag, isActive }: any) => {
     const isEditing = editingFolderId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
     return (
-      <View style={[
-        styles.itemCard,
-        isThisItemMoving && { opacity: 0.4 }
-      ]}>
+      <ScaleDecorator>
+        <TouchableOpacity
+          activeOpacity={1}
+          onLongPress={isDragMode ? drag : undefined}
+          delayLongPress={dragDelaySec * 1000}
+          disabled={!isDragMode}
+        >
+          <View style={[
+            styles.itemCard,
+            isThisItemMoving && { opacity: 0.4 },
+            isActive && styles.itemCardActive
+          ]}>
 
         {item.type === 'folder' && (
           <View style={styles.folderContainer}>
@@ -560,6 +570,7 @@ export default function MemoApp() {
                   placeholder="無題のフォルダ"
                   placeholderTextColor={THEME_COLORS.textSecondary}
                   autoFocus
+                  editable={!isDragMode}
                   onSubmitEditing={() => setEditingFolderId(null)}
                 />
               ) : (
@@ -587,11 +598,11 @@ export default function MemoApp() {
                   <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
                     <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                   </TouchableOpacity>
-                  <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)}>
+                  <View style={{ flexDirection: 'column', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
+                    <TouchableOpacity style={{ padding: 2 }} onPress={() => moveItemUp(item.id)}>
                       <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)}>
+                    <TouchableOpacity style={{ padding: 2 }} onPress={() => moveItemDown(item.id)}>
                       <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
                   </View>
@@ -605,13 +616,13 @@ export default function MemoApp() {
           <View style={styles.noteContainer}>
             <View style={styles.noteHeader}>
               <TextInput
-                style={styles.noteTitleInput}
+                style={[styles.noteTitleInput, { marginRight: 36 }]}
                 value={item.title}
                 onChangeText={(text) => updateItem(item.id, { title: text })}
                 placeholder="タイトル"
                 placeholderTextColor={THEME_COLORS.textSecondary}
                 selectionColor={THEME_COLORS.blue}
-                editable={!isSelectMode && !isThisItemMoving}
+                editable={!isSelectMode && !isThisItemMoving && !isDragMode}
               />
 
               {isSelectMode ? (
@@ -623,12 +634,9 @@ export default function MemoApp() {
                   />
                 </TouchableOpacity>
               ) : (
-                <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginRight: -4 }}>
-                  <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
+                <View style={{ position: 'absolute', right: -4, top: -4, backgroundColor: '#F3F4F6', borderRadius: 8 }}>
+                  <TouchableOpacity style={{ padding: 8 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
                     <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
-                    <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
                   </TouchableOpacity>
                 </View>
               )}
@@ -650,7 +658,7 @@ export default function MemoApp() {
               numberOfLines={3}
               scrollEnabled={false}
               selectionColor={THEME_COLORS.blue}
-              editable={!isSelectMode && !isThisItemMoving}
+              editable={!isSelectMode && !isThisItemMoving && !isDragMode}
             />
 
             {item.imageUri && (
@@ -697,6 +705,15 @@ export default function MemoApp() {
                   {item.fileName ? "ファイル変更" : "ファイル"}
                 </Text>
               </TouchableOpacity>
+              {!isSelectMode && (
+                <View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'flex-end' }}>
+                  <View style={{ backgroundColor: '#F3F4F6', borderRadius: 8, marginRight: -4, marginBottom: -4 }}>
+                    <TouchableOpacity style={{ padding: 8 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
+                      <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -711,7 +728,9 @@ export default function MemoApp() {
             onPress={() => toggleSelection(item.id)}
           />
         )}
-      </View>
+          </View>
+        </TouchableOpacity>
+      </ScaleDecorator>
     );
   };
 
@@ -738,8 +757,22 @@ export default function MemoApp() {
                 <MaterialIcons name="arrow-back-ios" size={22} color={THEME_COLORS.blue} style={{ marginLeft: 8 }} />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={() => setIsSettingsOpen(true)} style={styles.headerButton}>
-                <MaterialIcons name="settings" size={24} color={THEME_COLORS.textSecondary} />
+              <TouchableOpacity 
+                onPress={() => setIsSettingsOpen(true)}
+                onLongPress={() => {
+                  setIsDragMode(prev => {
+                    const nextMode = !prev;
+                    if (Platform.OS === 'web') {
+                      window.alert(nextMode ? "ドラッグモードをオンにしました\n長押しで配置変更できます" : "ドラッグモードをオフにしました");
+                    } else {
+                      Alert.alert("ドラッグモード", nextMode ? "オンにしました\n長押しで配置変更できます" : "オフにしました");
+                    }
+                    return nextMode;
+                  });
+                }}
+                style={styles.headerButton}
+              >
+                <MaterialIcons name="settings" size={24} color={isDragMode ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
               </TouchableOpacity>
             ),
             headerRight: () => isSelectMode ? (
@@ -775,27 +808,50 @@ export default function MemoApp() {
           }}
         />
 
-        <FlatList
-          data={currentItems}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={THEME_COLORS.blue}
-              colors={[THEME_COLORS.blue]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-              <Text style={styles.emptyText}>この階層には何もありません</Text>
-            </View>
-          }
-        />
+        {isDragMode ? (
+          <DraggableFlatList
+            data={currentItems}
+            keyExtractor={(item) => item.id}
+            onDragEnd={({ data }) => {
+              setItems(prev => {
+                const newItems = [...prev];
+                let dataIndex = 0;
+                for (let i = 0; i < newItems.length; i++) {
+                  if (newItems[i].parentId === currentParentId) {
+                    newItems[i] = data[dataIndex++];
+                  }
+                }
+                return newItems;
+              });
+            }}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+            activationDistance={10}
+          />
+        ) : (
+          <FlatList
+            data={currentItems}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={THEME_COLORS.blue}
+                colors={[THEME_COLORS.blue]}
+              />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+                <Text style={styles.emptyText}>この階層には何もありません</Text>
+              </View>
+            }
+          />
+        )}
 
         {isMoving && (
           <View style={styles.moveBanner}>
