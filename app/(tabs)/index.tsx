@@ -518,8 +518,7 @@ export default function MemoApp() {
     const isEditing = editingFolderId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
-    return (
-      <ScaleDecorator>
+    const content = (
         <TouchableOpacity
           activeOpacity={1}
           onLongPress={isDragMode ? drag : undefined}
@@ -730,8 +729,16 @@ export default function MemoApp() {
         )}
           </View>
         </TouchableOpacity>
-      </ScaleDecorator>
     );
+
+    if (isDragMode) {
+      return (
+        <ScaleDecorator>
+          {content}
+        </ScaleDecorator>
+      );
+    }
+    return content;
   };
 
   if (!isLoaded) {
