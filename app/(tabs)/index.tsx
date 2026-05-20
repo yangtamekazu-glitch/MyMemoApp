@@ -462,6 +462,35 @@ export default function MemoApp() {
     }
   };
 
+  const handleFolderIconPress = (id: string, currentUri: string | undefined | null) => {
+    if (Platform.OS === 'web') {
+      if (currentUri) {
+        const confirm = window.confirm("アイコンを変更しますか？「キャンセル」を押すと初期アイコンに戻します。");
+        if (confirm) {
+          pickFolderIcon(id);
+        } else {
+          updateItem(id, { folderIconUri: null });
+        }
+      } else {
+        pickFolderIcon(id);
+      }
+    } else {
+      if (currentUri) {
+        Alert.alert(
+          "アイコンの変更",
+          "どうしますか？",
+          [
+            { text: "キャンセル", style: "cancel" },
+            { text: "初期アイコンに戻す", onPress: () => updateItem(id, { folderIconUri: null }) },
+            { text: "別の画像を選ぶ", onPress: () => pickFolderIcon(id) }
+          ]
+        );
+      } else {
+        pickFolderIcon(id);
+      }
+    }
+  };
+
   const pickImage = async (id: string) => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -549,7 +578,7 @@ export default function MemoApp() {
           style={[styles.treeItem, { paddingLeft: 16 + depth * 20 }]} 
           onPress={() => jumpToItem(child)}
         >
-          <MaterialIcons name={child.type === 'folder' ? 'folder' : 'note'} size={20} color={THEME_COLORS.blue} style={{ marginRight: 8 }} />
+          <MaterialIcons name={child.type === 'folder' ? 'folder' : 'note'} size={20} color={child.type === 'folder' ? THEME_COLORS.blue : THEME_COLORS.green} style={{ marginRight: 8 }} />
           <Text style={styles.treeItemText} numberOfLines={1}>
             {child.title || (child.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}
           </Text>
@@ -600,7 +629,7 @@ export default function MemoApp() {
                       </View>
                       <TouchableOpacity
                         style={StyleSheet.absoluteFillObject}
-                        onPress={() => pickFolderIcon(item.id)}
+                        onPress={() => handleFolderIconPress(item.id, item.folderIconUri)}
                       />
                     </>
                   )}
@@ -1021,7 +1050,7 @@ export default function MemoApp() {
                 contentContainerStyle={{ padding: 16 }}
                 renderItem={({ item }) => (
                   <TouchableOpacity style={styles.searchResultItem} onPress={() => jumpToItem(item)}>
-                    <MaterialIcons name={item.type === 'folder' ? 'folder' : 'note'} size={24} color={THEME_COLORS.blue} style={{ marginRight: 12 }} />
+                    <MaterialIcons name={item.type === 'folder' ? 'folder' : 'note'} size={24} color={item.type === 'folder' ? THEME_COLORS.blue : THEME_COLORS.green} style={{ marginRight: 12 }} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title || (item.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}</Text>
                       {item.type === 'note' && !!item.text && (
