@@ -10,11 +10,20 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const getProcessedEmail = () => {
+    if (!email) return '';
+    if (email.includes('@')) {
+      return email;
+    }
+    return `${email}@mymemoapp.local`;
+  };
+
   const signUpWithEmail = async () => {
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const processedEmail = getProcessedEmail();
+    const { data, error } = await supabase.auth.signUp({ email: processedEmail, password });
     if (error) {
       setErrorMsg(error.message);
     } else {
@@ -31,7 +40,8 @@ export default function Login() {
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const processedEmail = getProcessedEmail();
+    const { error } = await supabase.auth.signInWithPassword({ email: processedEmail, password });
     if (error) {
       setErrorMsg(error.message);
     } else {
@@ -50,7 +60,7 @@ export default function Login() {
 
         <TextInput
           style={styles.input}
-          placeholder="メールアドレス"
+          placeholder="ユーザーネーム / メールアドレス"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
