@@ -1,6 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Slider from '@react-native-community/slider';
 import { supabase } from '../../utils/supabase';
 
 const mapToDB = (item: Item, userId: string) => ({
@@ -37,7 +36,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 
@@ -112,6 +111,9 @@ export default function MemoApp() {
   const [dragDelaySec, setDragDelaySec] = useState(0.5);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDragMode, setIsDragMode] = useState(false);
+
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
@@ -290,6 +292,31 @@ export default function MemoApp() {
   const changeDragDelay = async (sec: number) => {
     setDragDelaySec(sec);
     await AsyncStorage.setItem('dragDelaySec', sec.toString());
+  };
+
+  const jumpToItem = (item: Item) => {
+    animateLayout();
+    setIsSearchOpen(false);
+    setIsSettingsOpen(false);
+
+    const buildHistory = (targetParentId: string | null) => {
+      if (targetParentId === null) return [{ id: null, title: 'メモ帳' }];
+      const h: { id: string | null; title: string }[] = [];
+      let curr: string | null = targetParentId;
+      while (curr !== null) {
+        const parentFolder = items.find(i => i.id === curr);
+        if (!parentFolder) break;
+        h.unshift({ id: parentFolder.id, title: parentFolder.title || '無題のフォルダ' });
+        curr = parentFolder.parentId;
+      }
+      return [{ id: null, title: 'メモ帳' }, ...h];
+    };
+
+    setHistory(buildHistory(item.parentId));
+    setCurrentParentId(item.parentId);
+    setIsSelectMode(false);
+    setSelectedIds([]);
+    setEditingFolderId(null);
   };
 
   const currentItems = items.filter(item => item.parentId === currentParentId);
@@ -512,6 +539,24 @@ export default function MemoApp() {
       newItems[idx2] = temp;
       return newItems;
     });
+  };
+
+  const renderTree = (parentId: string | null, depth: number = 0) => {
+    const children = items.filter(i => i.parentId === parentId);
+    return children.map(child => (
+      <View key={child.id}>
+        <TouchableOpacity 
+          style={[styles.treeItem, { paddingLeft: 16 + depth * 20 }]} 
+          onPress={() => jumpToItem(child)}
+        >
+          <MaterialIcons name={child.type === 'folder' ? 'folder' : 'note'} size={20} color={THEME_COLORS.blue} style={{ marginRight: 8 }} />
+          <Text style={styles.treeItemText} numberOfLines={1}>
+            {child.title || (child.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}
+          </Text>
+        </TouchableOpacity>
+        {child.type === 'folder' && renderTree(child.id, depth + 1)}
+      </View>
+    ));
   };
 
   const renderItem = ({ item, drag, isActive }: any) => {
@@ -901,6 +946,18 @@ export default function MemoApp() {
         )}
 
         {!isSelectMode && !isMoving && (
+          <View style={styles.searchFabWrapper}>
+            <TouchableOpacity
+              style={styles.searchFab}
+              onPress={() => setIsSearchOpen(true)}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="search" size={28} color={'#FFF'} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!isSelectMode && !isMoving && (
           <Animated.View style={[styles.mainFabWrapper, fabAnimatedStyle]}>
             <TouchableOpacity
               style={styles.mainFab}
@@ -916,48 +973,74 @@ export default function MemoApp() {
           </Animated.View>
         )}
 
-        <Modal visible={isSettingsOpen} transparent animationType="fade">
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setIsSettingsOpen(false)}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.settingsCard}>
-              <Text style={styles.settingsTitle}>設定</Text>
-              <Text style={styles.settingsSubtitle}>ドラッグ開始までの長押し時間</Text>
+        <Modal visible={isSettingsOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.settingsCard, { maxHeight: '80%', paddingHorizontal: 0, paddingBottom: 0 }]}>
+              <Text style={[styles.settingsTitle, { paddingHorizontal: 24 }]}>フォルダ・メモ一覧</Text>
+              <Text style={[styles.settingsSubtitle, { paddingHorizontal: 24 }]}>タップするとその場所へ移動します</Text>
 
-              <View style={{ width: '100%', alignItems: 'center', marginBottom: 24 }}>
-                <Text style={{ fontSize: 36, fontWeight: '700', color: THEME_COLORS.blue, marginBottom: 16 }}>
-                  {dragDelaySec.toFixed(1)}<Text style={{ fontSize: 16, color: THEME_COLORS.textSecondary }}> 秒</Text>
-                </Text>
-
-                <Slider
-                  style={{ width: '100%', height: 40 }}
-                  minimumValue={0.1}
-                  maximumValue={3.0}
-                  step={0.1}
-                  value={dragDelaySec}
-                  onValueChange={(val) => setDragDelaySec(val)}
-                  onSlidingComplete={(val) => changeDragDelay(val)}
-                  minimumTrackTintColor={THEME_COLORS.blue}
-                  maximumTrackTintColor={'#D1D5DB'}
-                  thumbTintColor={Platform.OS === 'web' ? '#fff' : THEME_COLORS.blue}
-                />
-
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', paddingHorizontal: 12, marginTop: -4 }}>
-                  <Text style={{ color: THEME_COLORS.textSecondary, fontSize: 12 }}>短め (0.1秒)</Text>
-                  <Text style={{ color: THEME_COLORS.textSecondary, fontSize: 12 }}>長め (3.0秒)</Text>
-                </View>
-              </View>
+              <ScrollView style={{ width: '100%', flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }}>
+                {renderTree(null)}
+              </ScrollView>
 
               <TouchableOpacity
-                style={styles.closeSettingsButton}
+                style={[styles.closeSettingsButton, { margin: 24 }]}
                 onPress={() => setIsSettingsOpen(false)}
               >
                 <Text style={styles.closeSettingsText}>閉じる</Text>
               </TouchableOpacity>
-            </TouchableOpacity>
-          </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={isSearchOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.settingsCard, { maxHeight: '80%', paddingHorizontal: 0, paddingBottom: 0 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+                <TextInput
+                  style={{ flex: 1, backgroundColor: '#F3F4F6', borderRadius: 12, padding: 12, fontSize: 16, color: THEME_COLORS.textMain }}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="キーワード検索..."
+                  placeholderTextColor={THEME_COLORS.textSecondary}
+                  autoFocus
+                />
+                <TouchableOpacity onPress={() => { setIsSearchOpen(false); setSearchQuery(''); }} style={{ padding: 12, marginLeft: 8 }}>
+                  <MaterialIcons name="close" size={24} color={THEME_COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={items.filter(item => 
+                  searchQuery.trim() !== '' && 
+                  ((item.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                   (item.text || '').toLowerCase().includes(searchQuery.toLowerCase()))
+                )}
+                keyExtractor={item => item.id}
+                style={{ flex: 1, width: '100%' }}
+                contentContainerStyle={{ padding: 16 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={styles.searchResultItem} onPress={() => jumpToItem(item)}>
+                    <MaterialIcons name={item.type === 'folder' ? 'folder' : 'note'} size={24} color={THEME_COLORS.blue} style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title || (item.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}</Text>
+                      {item.type === 'note' && !!item.text && (
+                        <Text style={styles.searchResultText} numberOfLines={1}>{item.text}</Text>
+                      )}
+                    </View>
+                    <MaterialIcons name="chevron-right" size={20} color={THEME_COLORS.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  searchQuery.trim() !== '' ? (
+                    <Text style={{ textAlign: 'center', marginTop: 40, color: THEME_COLORS.textSecondary }}>見つかりませんでした</Text>
+                  ) : (
+                    <Text style={{ textAlign: 'center', marginTop: 40, color: THEME_COLORS.textSecondary }}>キーワードを入力してください</Text>
+                  )
+                }
+              />
+            </View>
+          </View>
         </Modal>
 
       </KeyboardAvoidingView>
@@ -1279,5 +1362,54 @@ const styles = StyleSheet.create({
   moveExecuteText: {
     color: '#FFFFFF',
     fontWeight: '700'
+  }
+  searchFabWrapper: {
+    position: 'absolute',
+    bottom: 24,
+    left: 24,
+    zIndex: 11
+  },
+  searchFab: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: THEME_COLORS.blue,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: THEME_COLORS.blue,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  treeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingRight: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6'
+  },
+  treeItemText: {
+    fontSize: 16,
+    color: THEME_COLORS.textMain,
+    flex: 1
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6'
+  },
+  searchResultTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: THEME_COLORS.textMain,
+    marginBottom: 4
+  },
+  searchResultText: {
+    fontSize: 14,
+    color: THEME_COLORS.textSecondary
   }
 });
