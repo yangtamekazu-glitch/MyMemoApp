@@ -1362,7 +1362,7 @@ const styles = StyleSheet.create({
   moveExecuteText: {
     color: '#FFFFFF',
     fontWeight: '700'
-  }
+  },
   searchFabWrapper: {
     position: 'absolute',
     bottom: 24,
