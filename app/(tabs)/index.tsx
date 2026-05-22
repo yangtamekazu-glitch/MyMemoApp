@@ -970,7 +970,7 @@ export default function MemoApp() {
               });
             }}
             renderItem={renderItem}
-            contentContainerStyle={{ paddingBottom: isMoving ? 300 : 260, padding: 16 }}
+            contentContainerStyle={{ paddingBottom: isMoving ? 450 : 400, padding: 16 }}
             showsVerticalScrollIndicator={false}
             activationDistance={10}
           />
@@ -979,7 +979,7 @@ export default function MemoApp() {
             data={currentItems}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
-            contentContainerStyle={{ paddingBottom: isMoving ? 300 : 260, padding: 16 }}
+            contentContainerStyle={{ paddingBottom: isMoving ? 450 : 400, padding: 16 }}
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl
