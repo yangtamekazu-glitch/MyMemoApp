@@ -28,3 +28,6 @@
 https://mymemoapp.onrender.com/
 
 ユーザーネーム、パスワード共にアルファベット6文字以上
+テスト用
+UN:aaaaaa
+PW:aaaaaa
