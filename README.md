@@ -27,3 +27,4 @@
 サービスURL
 https://mymemoapp.onrender.com/
 
+ユーザーネーム、パスワード共にアルファベット6文字以上
