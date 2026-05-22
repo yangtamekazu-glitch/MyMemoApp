@@ -118,6 +118,23 @@ export default function MemoApp() {
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
 
+  const pastStatesRef = useRef<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const typingTimer = useRef<NodeJS.Timeout | null>(null);
+  const isTyping = useRef(false);
+
+  const pushHistory = (currentState: Item[]) => {
+    const stateStr = JSON.stringify(currentState);
+    if (pastStatesRef.current.length > 0 && pastStatesRef.current[pastStatesRef.current.length - 1] === stateStr) {
+      return;
+    }
+    pastStatesRef.current.push(stateStr);
+    if (pastStatesRef.current.length > 30) {
+      pastStatesRef.current.shift();
+    }
+    setCanUndo(true);
+  };
+
   // Reanimated values for FAB
   const fabRotation = useSharedValue(0);
   const menuOpacity = useSharedValue(0);
@@ -347,27 +364,43 @@ export default function MemoApp() {
   const handleAdd = (type: 'folder' | 'note') => {
     animateLayout();
     setIsFabOpen(false);
-    const newId = Date.now().toString();
-    const newItem: Item = {
-      id: newId,
-      parentId: currentParentId,
-      type: type,
-      title: '',
-      text: '',
-      imageUri: null,
-      folderIconUri: null,
-      fileUri: null,
-      fileName: null,
-    };
-    setItems(prev => [...prev, newItem]);
-
-    if (type === 'folder') {
-      setEditingFolderId(newId);
-    }
+    setItems(prev => {
+      pushHistory(prev);
+      const newId = Date.now().toString();
+      const newItem: Item = {
+        id: newId,
+        parentId: currentParentId,
+        type: type,
+        title: '',
+        text: '',
+        imageUri: null,
+        folderIconUri: null,
+        fileUri: null,
+        fileName: null,
+      };
+      if (type === 'folder') {
+        setTimeout(() => setEditingFolderId(newId), 50);
+      }
+      return [...prev, newItem];
+    });
   };
 
-  const updateItem = (id: string, updates: Partial<Item>) => {
-    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+  const updateItem = (id: string, updates: Partial<Item>, isTextEdit: boolean = false) => {
+    setItems(prev => {
+      if (isTextEdit) {
+        if (!isTyping.current) {
+          pushHistory(prev);
+          isTyping.current = true;
+        }
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => {
+          isTyping.current = false;
+        }, 1500);
+      } else {
+        pushHistory(prev);
+      }
+      return prev.map(item => item.id === id ? { ...item, ...updates } : item);
+    });
   };
 
   const toggleSelection = (id: string) => {
@@ -387,11 +420,16 @@ export default function MemoApp() {
           if (item.parentId !== null && idsToDelete.has(item.parentId)) idsToDelete.add(item.id);
         });
       }
+      
+      setItems(prev => {
+        pushHistory(prev);
+        return prev.filter(item => !idsToDelete.has(item.id));
+      });
+
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from('memos').delete().in('id', Array.from(idsToDelete));
       }
-      setItems(prev => prev.filter(item => !idsToDelete.has(item.id)));
       setIsSelectMode(false);
       setSelectedIds([]);
     };
@@ -405,6 +443,23 @@ export default function MemoApp() {
         { text: "キャンセル", style: "cancel" },
         { text: "削除", style: "destructive", onPress: executeDelete }
       ]);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (pastStatesRef.current.length === 0) return;
+    const previousStateStr = pastStatesRef.current.pop();
+    if (previousStateStr) {
+      animateLayout();
+      const previousState = JSON.parse(previousStateStr);
+      setItems(previousState);
+      setCanUndo(pastStatesRef.current.length > 0);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && previousState.length > 0) {
+        const upsertData = previousState.map((item: Item) => mapToDB(item, user.id));
+        await supabase.from('memos').upsert(upsertData);
+      }
     }
   };
 
@@ -442,9 +497,12 @@ export default function MemoApp() {
       return;
     }
     animateLayout();
-    setItems(prev => prev.map(item =>
-      movingItemIds.includes(item.id) ? { ...item, parentId: currentParentId } : item
-    ));
+    setItems(prev => {
+      pushHistory(prev);
+      return prev.map(item =>
+        movingItemIds.includes(item.id) ? { ...item, parentId: currentParentId } : item
+      );
+    });
     setIsMoving(false);
     setMovingItemIds([]);
   };
@@ -535,6 +593,7 @@ export default function MemoApp() {
   const moveItemUp = (id: string) => {
     animateLayout();
     setItems(prev => {
+      pushHistory(prev);
       const currentParentItems = prev.filter(item => item.parentId === currentParentId);
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx <= 0) return prev;
@@ -554,6 +613,7 @@ export default function MemoApp() {
   const moveItemDown = (id: string) => {
     animateLayout();
     setItems(prev => {
+      pushHistory(prev);
       const currentParentItems = prev.filter(item => item.parentId === currentParentId);
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx === -1 || currentIdx >= currentParentItems.length - 1) return prev;
@@ -639,7 +699,7 @@ export default function MemoApp() {
                   <TextInput
                     style={styles.folderInput}
                     value={item.title}
-                    onChangeText={(text) => updateItem(item.id, { title: text })}
+                    onChangeText={(text) => updateItem(item.id, { title: text }, true)}
                     placeholder="無題のフォルダ"
                     placeholderTextColor={THEME_COLORS.textSecondary}
                     autoFocus
@@ -691,7 +751,7 @@ export default function MemoApp() {
                 <TextInput
                   style={[styles.noteTitleInput, { marginRight: 36 }]}
                   value={item.title}
-                  onChangeText={(text) => updateItem(item.id, { title: text })}
+                  onChangeText={(text) => updateItem(item.id, { title: text }, true)}
                   placeholder="タイトル"
                   placeholderTextColor={THEME_COLORS.textSecondary}
                   selectionColor={THEME_COLORS.blue}
@@ -718,7 +778,7 @@ export default function MemoApp() {
               <TextInput
                 style={[styles.noteInput, { height: Math.max(78, inputHeights[item.id] || 78) }]}
                 value={item.text}
-                onChangeText={(text) => updateItem(item.id, { text: text })}
+                onChangeText={(text) => updateItem(item.id, { text: text }, true)}
                 onContentSizeChange={(e) => {
                   setInputHeights(prev => ({
                     ...prev,
@@ -867,6 +927,9 @@ export default function MemoApp() {
               </View>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={handleUndo} style={styles.headerButton} disabled={!canUndo}>
+                  <MaterialIcons name="undo" size={26} color={canUndo ? THEME_COLORS.blue : THEME_COLORS.border} />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={handleSave} style={styles.headerButton}>
                   <MaterialIcons name="save" size={26} color={THEME_COLORS.blue} />
                 </TouchableOpacity>
@@ -895,6 +958,7 @@ export default function MemoApp() {
             keyExtractor={(item) => item.id}
             onDragEnd={({ data }) => {
               setItems(prev => {
+                pushHistory(prev);
                 const newItems = [...prev];
                 let dataIndex = 0;
                 for (let i = 0; i < newItems.length; i++) {
@@ -906,7 +970,7 @@ export default function MemoApp() {
               });
             }}
             renderItem={renderItem}
-            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            contentContainerStyle={{ paddingBottom: isMoving ? 300 : 260, padding: 16 }}
             showsVerticalScrollIndicator={false}
             activationDistance={10}
           />
@@ -915,7 +979,7 @@ export default function MemoApp() {
             data={currentItems}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
-            contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
+            contentContainerStyle={{ paddingBottom: isMoving ? 300 : 260, padding: 16 }}
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl
@@ -1442,3 +1506,4 @@ const styles = StyleSheet.create({
     color: THEME_COLORS.textSecondary
   }
 });
+
