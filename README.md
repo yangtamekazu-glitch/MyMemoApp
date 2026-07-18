@@ -24,3 +24,10 @@
 4. `python app.py` コマンドによりローカル開発サーバーを起動する。
 5. Webブラウザにて `http://localhost:10000` へアクセスすることで、アプリケーションの使用が可能となる。
 
+サービスURL
+https://mymemoapp.onrender.com/
+
+ユーザーネーム、パスワード共にアルファベット6文字以上
+テスト用
+UN:aaaaaa
+PW:aaaaaa

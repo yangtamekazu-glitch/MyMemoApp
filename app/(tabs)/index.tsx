@@ -1,6 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Slider from '@react-native-community/slider';
 import { supabase } from '../../utils/supabase';
 
 const mapToDB = (item: Item, userId: string) => ({
@@ -36,9 +35,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View, LayoutAnimation, UIManager } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
+import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -110,9 +110,30 @@ export default function MemoApp() {
 
   const [dragDelaySec, setDragDelaySec] = useState(0.5);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDragMode, setIsDragMode] = useState(false);
+
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [isMoving, setIsMoving] = useState(false);
   const [movingItemIds, setMovingItemIds] = useState<string[]>([]);
+
+  const pastStatesRef = useRef<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const typingTimer = useRef<NodeJS.Timeout | null>(null);
+  const isTyping = useRef(false);
+
+  const pushHistory = (currentState: Item[]) => {
+    const stateStr = JSON.stringify(currentState);
+    if (pastStatesRef.current.length > 0 && pastStatesRef.current[pastStatesRef.current.length - 1] === stateStr) {
+      return;
+    }
+    pastStatesRef.current.push(stateStr);
+    if (pastStatesRef.current.length > 30) {
+      pastStatesRef.current.shift();
+    }
+    setCanUndo(true);
+  };
 
   // Reanimated values for FAB
   const fabRotation = useSharedValue(0);
@@ -159,6 +180,23 @@ export default function MemoApp() {
       let loadedItems: Item[] = [];
       if (dbData && dbData.length > 0) {
         loadedItems = dbData.map(mapFromDB);
+      }
+
+      const savedOrderStr = await AsyncStorage.getItem('my_memo_order');
+      if (savedOrderStr) {
+        try {
+          const savedOrder: string[] = JSON.parse(savedOrderStr);
+          loadedItems.sort((a, b) => {
+            const indexA = savedOrder.indexOf(a.id);
+            const indexB = savedOrder.indexOf(b.id);
+            if (indexA === -1 && indexB === -1) return 0;
+            if (indexA === -1) return 1;
+            if (indexB === -1) return -1;
+            return indexA - indexB;
+          });
+        } catch (e) {
+          console.error("Order parse error:", e);
+        }
       }
 
       const savedData = await AsyncStorage.getItem('my_memo_data');
@@ -210,6 +248,38 @@ export default function MemoApp() {
     loadData();
   }, []);
 
+  const handleSave = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const upsertData = items.map(item => mapToDB(item, user.id));
+        const { error } = await supabase.from('memos').upsert(upsertData);
+        if (error) throw error;
+
+        await AsyncStorage.setItem('my_memo_order', JSON.stringify(items.map(i => i.id)));
+
+        if (Platform.OS === 'web') {
+          window.alert("現在のメモと配置を保存しました。");
+        } else {
+          Alert.alert("保存完了", "現在のメモと配置を保存しました。");
+        }
+      } else {
+        if (Platform.OS === 'web') {
+          window.alert("ログインしていません");
+        } else {
+          Alert.alert("エラー", "ログインしていません");
+        }
+      }
+    } catch (err) {
+      console.error("Save failed:", err);
+      if (Platform.OS === 'web') {
+        window.alert("保存に失敗しました。");
+      } else {
+        Alert.alert("エラー", "保存に失敗しました。");
+      }
+    }
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
@@ -227,6 +297,7 @@ export default function MemoApp() {
           const upsertData = items.map(item => mapToDB(item, user.id));
           const { error } = await supabase.from('memos').upsert(upsertData);
           if (error) console.error("Save Error:", error);
+          await AsyncStorage.setItem('my_memo_order', JSON.stringify(items.map(i => i.id)));
         }
       } catch (err) {
         console.error("Auto-save failed:", err);
@@ -238,6 +309,31 @@ export default function MemoApp() {
   const changeDragDelay = async (sec: number) => {
     setDragDelaySec(sec);
     await AsyncStorage.setItem('dragDelaySec', sec.toString());
+  };
+
+  const jumpToItem = (item: Item) => {
+    animateLayout();
+    setIsSearchOpen(false);
+    setIsSettingsOpen(false);
+
+    const buildHistory = (targetParentId: string | null) => {
+      if (targetParentId === null) return [{ id: null, title: 'メモ帳' }];
+      const h: { id: string | null; title: string }[] = [];
+      let curr: string | null = targetParentId;
+      while (curr !== null) {
+        const parentFolder = items.find(i => i.id === curr);
+        if (!parentFolder) break;
+        h.unshift({ id: parentFolder.id, title: parentFolder.title || '無題のフォルダ' });
+        curr = parentFolder.parentId;
+      }
+      return [{ id: null, title: 'メモ帳' }, ...h];
+    };
+
+    setHistory(buildHistory(item.parentId));
+    setCurrentParentId(item.parentId);
+    setIsSelectMode(false);
+    setSelectedIds([]);
+    setEditingFolderId(null);
   };
 
   const currentItems = items.filter(item => item.parentId === currentParentId);
@@ -268,27 +364,43 @@ export default function MemoApp() {
   const handleAdd = (type: 'folder' | 'note') => {
     animateLayout();
     setIsFabOpen(false);
-    const newId = Date.now().toString();
-    const newItem: Item = {
-      id: newId,
-      parentId: currentParentId,
-      type: type,
-      title: '',
-      text: '',
-      imageUri: null,
-      folderIconUri: null,
-      fileUri: null,
-      fileName: null,
-    };
-    setItems(prev => [...prev, newItem]);
-
-    if (type === 'folder') {
-      setEditingFolderId(newId);
-    }
+    setItems(prev => {
+      pushHistory(prev);
+      const newId = Date.now().toString();
+      const newItem: Item = {
+        id: newId,
+        parentId: currentParentId,
+        type: type,
+        title: '',
+        text: '',
+        imageUri: null,
+        folderIconUri: null,
+        fileUri: null,
+        fileName: null,
+      };
+      if (type === 'folder') {
+        setTimeout(() => setEditingFolderId(newId), 50);
+      }
+      return [...prev, newItem];
+    });
   };
 
-  const updateItem = (id: string, updates: Partial<Item>) => {
-    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+  const updateItem = (id: string, updates: Partial<Item>, isTextEdit: boolean = false) => {
+    setItems(prev => {
+      if (isTextEdit) {
+        if (!isTyping.current) {
+          pushHistory(prev);
+          isTyping.current = true;
+        }
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => {
+          isTyping.current = false;
+        }, 1500);
+      } else {
+        pushHistory(prev);
+      }
+      return prev.map(item => item.id === id ? { ...item, ...updates } : item);
+    });
   };
 
   const toggleSelection = (id: string) => {
@@ -308,11 +420,16 @@ export default function MemoApp() {
           if (item.parentId !== null && idsToDelete.has(item.parentId)) idsToDelete.add(item.id);
         });
       }
+      
+      setItems(prev => {
+        pushHistory(prev);
+        return prev.filter(item => !idsToDelete.has(item.id));
+      });
+
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from('memos').delete().in('id', Array.from(idsToDelete));
       }
-      setItems(prev => prev.filter(item => !idsToDelete.has(item.id)));
       setIsSelectMode(false);
       setSelectedIds([]);
     };
@@ -329,6 +446,23 @@ export default function MemoApp() {
     }
   };
 
+  const handleUndo = async () => {
+    if (pastStatesRef.current.length === 0) return;
+    const previousStateStr = pastStatesRef.current.pop();
+    if (previousStateStr) {
+      animateLayout();
+      const previousState = JSON.parse(previousStateStr);
+      setItems(previousState);
+      setCanUndo(pastStatesRef.current.length > 0);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && previousState.length > 0) {
+        const upsertData = previousState.map((item: Item) => mapToDB(item, user.id));
+        await supabase.from('memos').upsert(upsertData);
+      }
+    }
+  };
+
   const startMoving = () => {
     animateLayout();
     setMovingItemIds([...selectedIds]);
@@ -341,6 +475,45 @@ export default function MemoApp() {
     animateLayout();
     setIsMoving(false);
     setMovingItemIds([]);
+  };
+
+  const [isSummarizing, setIsSummarizing] = useState<string | null>(null);
+
+  const handleSummarize = async (id: string, text: string) => {
+    if (!text || text.trim() === '') {
+      if (Platform.OS === 'web') window.alert("メモが空です");
+      else Alert.alert("エラー", "メモが空です");
+      return;
+    }
+    
+    setIsSummarizing(id);
+    try {
+      const { data, error } = await supabase.functions.invoke('summarize', {
+        body: { text },
+      });
+
+      if (error) throw error;
+      const summary = data?.summary;
+      
+      if (summary) {
+        setItems(prev => {
+          pushHistory(prev);
+          return prev.map(item => {
+            if (item.id === id) {
+              const newText = `[AI要約]\n${summary.trim()}\n\n---\n${item.text}`;
+              return { ...item, text: newText };
+            }
+            return item;
+          });
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      if (Platform.OS === 'web') window.alert("要約に失敗しました");
+      else Alert.alert("エラー", "要約に失敗しました");
+    } finally {
+      setIsSummarizing(null);
+    }
   };
 
   const isChildOfMovingItems = (targetParentId: string | null): boolean => {
@@ -363,9 +536,12 @@ export default function MemoApp() {
       return;
     }
     animateLayout();
-    setItems(prev => prev.map(item =>
-      movingItemIds.includes(item.id) ? { ...item, parentId: currentParentId } : item
-    ));
+    setItems(prev => {
+      pushHistory(prev);
+      return prev.map(item =>
+        movingItemIds.includes(item.id) ? { ...item, parentId: currentParentId } : item
+      );
+    });
     setIsMoving(false);
     setMovingItemIds([]);
   };
@@ -380,6 +556,35 @@ export default function MemoApp() {
     if (!result.canceled) {
       const publicUrl = await uploadToStorage(result.assets[0].uri, 'icons');
       updateItem(id, { folderIconUri: publicUrl });
+    }
+  };
+
+  const handleFolderIconPress = (id: string, currentUri: string | undefined | null) => {
+    if (Platform.OS === 'web') {
+      if (currentUri) {
+        const confirm = window.confirm("アイコンを変更しますか？「キャンセル」を押すと初期アイコンに戻します。");
+        if (confirm) {
+          pickFolderIcon(id);
+        } else {
+          updateItem(id, { folderIconUri: null });
+        }
+      } else {
+        pickFolderIcon(id);
+      }
+    } else {
+      if (currentUri) {
+        Alert.alert(
+          "アイコンの変更",
+          "どうしますか？",
+          [
+            { text: "キャンセル", style: "cancel" },
+            { text: "初期アイコンに戻す", onPress: () => updateItem(id, { folderIconUri: null }) },
+            { text: "別の画像を選ぶ", onPress: () => pickFolderIcon(id) }
+          ]
+        );
+      } else {
+        pickFolderIcon(id);
+      }
     }
   };
 
@@ -427,14 +632,15 @@ export default function MemoApp() {
   const moveItemUp = (id: string) => {
     animateLayout();
     setItems(prev => {
+      pushHistory(prev);
       const currentParentItems = prev.filter(item => item.parentId === currentParentId);
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx <= 0) return prev;
       const targetId = currentParentItems[currentIdx - 1].id;
-      
+
       const idx1 = prev.findIndex(item => item.id === id);
       const idx2 = prev.findIndex(item => item.id === targetId);
-      
+
       const newItems = [...prev];
       const temp = newItems[idx1];
       newItems[idx1] = newItems[idx2];
@@ -446,14 +652,15 @@ export default function MemoApp() {
   const moveItemDown = (id: string) => {
     animateLayout();
     setItems(prev => {
+      pushHistory(prev);
       const currentParentItems = prev.filter(item => item.parentId === currentParentId);
       const currentIdx = currentParentItems.findIndex(item => item.id === id);
       if (currentIdx === -1 || currentIdx >= currentParentItems.length - 1) return prev;
       const targetId = currentParentItems[currentIdx + 1].id;
-      
+
       const idx1 = prev.findIndex(item => item.id === id);
       const idx2 = prev.findIndex(item => item.id === targetId);
-      
+
       const newItems = [...prev];
       const temp = newItems[idx1];
       newItems[idx1] = newItems[idx2];
@@ -462,15 +669,40 @@ export default function MemoApp() {
     });
   };
 
-  const renderItem = ({ item }: any) => {
+  const renderTree = (parentId: string | null, depth: number = 0) => {
+    const children = items.filter(i => i.parentId === parentId);
+    return children.map(child => (
+      <View key={child.id}>
+        <TouchableOpacity 
+          style={[styles.treeItem, { paddingLeft: 16 + depth * 20 }]} 
+          onPress={() => jumpToItem(child)}
+        >
+          <MaterialIcons name={child.type === 'folder' ? 'folder' : 'note'} size={20} color={child.type === 'folder' ? THEME_COLORS.blue : THEME_COLORS.green} style={{ marginRight: 8 }} />
+          <Text style={styles.treeItemText} numberOfLines={1}>
+            {child.title || (child.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}
+          </Text>
+        </TouchableOpacity>
+        {child.type === 'folder' && renderTree(child.id, depth + 1)}
+      </View>
+    ));
+  };
+
+  const renderItem = ({ item, drag, isActive }: any) => {
     const isEditing = editingFolderId === item.id;
     const isThisItemMoving = isMoving && movingItemIds.includes(item.id);
 
-    return (
-      <View style={[
-        styles.itemCard,
-        isThisItemMoving && { opacity: 0.4 }
-      ]}>
+    const content = (
+      <TouchableOpacity
+        activeOpacity={1}
+        onLongPress={isDragMode ? drag : undefined}
+        delayLongPress={dragDelaySec * 1000}
+        disabled={!isDragMode}
+      >
+        <View style={[
+          styles.itemCard,
+          isThisItemMoving && { opacity: 0.4 },
+          isActive && styles.itemCardActive
+        ]}>
 
           {item.type === 'folder' && (
             <View style={styles.folderContainer}>
@@ -496,7 +728,7 @@ export default function MemoApp() {
                       </View>
                       <TouchableOpacity
                         style={StyleSheet.absoluteFillObject}
-                        onPress={() => pickFolderIcon(item.id)}
+                        onPress={() => handleFolderIconPress(item.id, item.folderIconUri)}
                       />
                     </>
                   )}
@@ -506,10 +738,11 @@ export default function MemoApp() {
                   <TextInput
                     style={styles.folderInput}
                     value={item.title}
-                    onChangeText={(text) => updateItem(item.id, { title: text })}
+                    onChangeText={(text) => updateItem(item.id, { title: text }, true)}
                     placeholder="無題のフォルダ"
                     placeholderTextColor={THEME_COLORS.textSecondary}
                     autoFocus
+                    editable={!isDragMode}
                     onSubmitEditing={() => setEditingFolderId(null)}
                   />
                 ) : (
@@ -537,11 +770,11 @@ export default function MemoApp() {
                     <TouchableOpacity style={styles.iconButton} onPress={() => setEditingFolderId(item.id)}>
                       <MaterialIcons name="edit" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
-                    <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
-                      <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)}>
+                    <View style={{ flexDirection: 'column', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginLeft: 8 }}>
+                      <TouchableOpacity style={{ padding: 2 }} onPress={() => moveItemUp(item.id)}>
                         <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
                       </TouchableOpacity>
-                      <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)}>
+                      <TouchableOpacity style={{ padding: 2 }} onPress={() => moveItemDown(item.id)}>
                         <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
                       </TouchableOpacity>
                     </View>
@@ -555,13 +788,13 @@ export default function MemoApp() {
             <View style={styles.noteContainer}>
               <View style={styles.noteHeader}>
                 <TextInput
-                  style={styles.noteTitleInput}
+                  style={[styles.noteTitleInput, { marginRight: 36 }]}
                   value={item.title}
-                  onChangeText={(text) => updateItem(item.id, { title: text })}
+                  onChangeText={(text) => updateItem(item.id, { title: text }, true)}
                   placeholder="タイトル"
                   placeholderTextColor={THEME_COLORS.textSecondary}
                   selectionColor={THEME_COLORS.blue}
-                  editable={!isSelectMode && !isThisItemMoving}
+                  editable={!isSelectMode && !isThisItemMoving && !isDragMode}
                 />
 
                 {isSelectMode ? (
@@ -573,12 +806,9 @@ export default function MemoApp() {
                     />
                   </TouchableOpacity>
                 ) : (
-                  <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2, marginRight: -4 }}>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
+                  <View style={{ position: 'absolute', right: -4, top: -4, backgroundColor: '#F3F4F6', borderRadius: 8 }}>
+                    <TouchableOpacity style={{ padding: 8 }} onPress={() => moveItemUp(item.id)} disabled={isThisItemMoving}>
                       <MaterialIcons name="arrow-upward" size={22} color={THEME_COLORS.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={{ padding: 4 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
-                      <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -587,7 +817,7 @@ export default function MemoApp() {
               <TextInput
                 style={[styles.noteInput, { height: Math.max(78, inputHeights[item.id] || 78) }]}
                 value={item.text}
-                onChangeText={(text) => updateItem(item.id, { text: text })}
+                onChangeText={(text) => updateItem(item.id, { text: text }, true)}
                 onContentSizeChange={(e) => {
                   setInputHeights(prev => ({
                     ...prev,
@@ -600,7 +830,7 @@ export default function MemoApp() {
                 numberOfLines={3}
                 scrollEnabled={false}
                 selectionColor={THEME_COLORS.blue}
-                editable={!isSelectMode && !isThisItemMoving}
+                editable={!isSelectMode && !isThisItemMoving && !isDragMode}
               />
 
               {item.imageUri && (
@@ -647,6 +877,29 @@ export default function MemoApp() {
                     {item.fileName ? "ファイル変更" : "ファイル"}
                   </Text>
                 </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.chipButton, { backgroundColor: 'rgba(52, 199, 89, 0.1)' }]} 
+                  onPress={() => !isSelectMode && handleSummarize(item.id, item.text)} 
+                  disabled={isThisItemMoving || isSummarizing === item.id}
+                >
+                  {isSummarizing === item.id ? (
+                    <ActivityIndicator size="small" color={THEME_COLORS.green} style={{ width: 18, height: 18 }} />
+                  ) : (
+                    <MaterialIcons name="auto-awesome" size={18} color={THEME_COLORS.green} />
+                  )}
+                  <Text style={[styles.chipText, { color: THEME_COLORS.green }]}>
+                    {isSummarizing === item.id ? "要約中..." : "AI要約"}
+                  </Text>
+                </TouchableOpacity>
+                {!isSelectMode && (
+                  <View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'flex-end' }}>
+                    <View style={{ backgroundColor: '#F3F4F6', borderRadius: 8, marginRight: -4, marginBottom: -4 }}>
+                      <TouchableOpacity style={{ padding: 8 }} onPress={() => moveItemDown(item.id)} disabled={isThisItemMoving}>
+                        <MaterialIcons name="arrow-downward" size={22} color={THEME_COLORS.textSecondary} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             </View>
           )}
@@ -662,7 +915,17 @@ export default function MemoApp() {
             />
           )}
         </View>
+      </TouchableOpacity>
     );
+
+    if (isDragMode) {
+      return (
+        <ScaleDecorator>
+          {content}
+        </ScaleDecorator>
+      );
+    }
+    return content;
   };
 
   if (!isLoaded) {
@@ -688,8 +951,22 @@ export default function MemoApp() {
                 <MaterialIcons name="arrow-back-ios" size={22} color={THEME_COLORS.blue} style={{ marginLeft: 8 }} />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={() => setIsSettingsOpen(true)} style={styles.headerButton}>
-                <MaterialIcons name="settings" size={24} color={THEME_COLORS.textSecondary} />
+              <TouchableOpacity
+                onPress={() => setIsSettingsOpen(true)}
+                onLongPress={() => {
+                  setIsDragMode(prev => {
+                    const nextMode = !prev;
+                    if (Platform.OS === 'web') {
+                      window.alert(nextMode ? "ドラッグモードをオンにしました\n長押しで配置変更できます" : "ドラッグモードをオフにしました");
+                    } else {
+                      Alert.alert("ドラッグモード", nextMode ? "オンにしました\n長押しで配置変更できます" : "オフにしました");
+                    }
+                    return nextMode;
+                  });
+                }}
+                style={styles.headerButton}
+              >
+                <MaterialIcons name="settings" size={24} color={isDragMode ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
               </TouchableOpacity>
             ),
             headerRight: () => isSelectMode ? (
@@ -703,6 +980,12 @@ export default function MemoApp() {
               </View>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity onPress={handleUndo} style={styles.headerButton} disabled={!canUndo}>
+                  <MaterialIcons name="undo" size={26} color={canUndo ? THEME_COLORS.blue : THEME_COLORS.border} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleSave} style={styles.headerButton}>
+                  <MaterialIcons name="save" size={26} color={THEME_COLORS.blue} />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={onRefresh} style={styles.headerButton} disabled={refreshing}>
                   {refreshing ? (
                     <ActivityIndicator size="small" color={THEME_COLORS.blue} style={{ width: 26, height: 26 }} />
@@ -722,27 +1005,51 @@ export default function MemoApp() {
           }}
         />
 
-        <FlatList
-          data={currentItems}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: isMoving ? 160 : 120, padding: 16 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={THEME_COLORS.blue}
-              colors={[THEME_COLORS.blue]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
-              <Text style={styles.emptyText}>この階層には何もありません</Text>
-            </View>
-          }
-        />
+        {isDragMode ? (
+          <DraggableFlatList
+            data={currentItems}
+            keyExtractor={(item) => item.id}
+            onDragEnd={({ data }) => {
+              setItems(prev => {
+                pushHistory(prev);
+                const newItems = [...prev];
+                let dataIndex = 0;
+                for (let i = 0; i < newItems.length; i++) {
+                  if (newItems[i].parentId === currentParentId) {
+                    newItems[i] = data[dataIndex++];
+                  }
+                }
+                return newItems;
+              });
+            }}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingBottom: isMoving ? 450 : 400, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+            activationDistance={10}
+          />
+        ) : (
+          <FlatList
+            data={currentItems}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingBottom: isMoving ? 450 : 400, padding: 16 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={THEME_COLORS.blue}
+                colors={[THEME_COLORS.blue]}
+              />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialIcons name="note" size={64} color={'#D1D5DB'} />
+                <Text style={styles.emptyText}>この階層には何もありません</Text>
+              </View>
+            }
+          />
+        )}
 
         {isMoving && (
           <View style={styles.moveBanner}>
@@ -785,6 +1092,18 @@ export default function MemoApp() {
         )}
 
         {!isSelectMode && !isMoving && (
+          <View style={styles.searchFabWrapper}>
+            <TouchableOpacity
+              style={styles.searchFab}
+              onPress={() => setIsSearchOpen(true)}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="search" size={28} color={'#FFF'} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!isSelectMode && !isMoving && (
           <Animated.View style={[styles.mainFabWrapper, fabAnimatedStyle]}>
             <TouchableOpacity
               style={styles.mainFab}
@@ -800,48 +1119,74 @@ export default function MemoApp() {
           </Animated.View>
         )}
 
-        <Modal visible={isSettingsOpen} transparent animationType="fade">
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setIsSettingsOpen(false)}
-          >
-            <TouchableOpacity activeOpacity={1} style={styles.settingsCard}>
-              <Text style={styles.settingsTitle}>設定</Text>
-              <Text style={styles.settingsSubtitle}>ドラッグ開始までの長押し時間</Text>
+        <Modal visible={isSettingsOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.settingsCard, { maxHeight: '80%', paddingHorizontal: 0, paddingBottom: 0 }]}>
+              <Text style={[styles.settingsTitle, { paddingHorizontal: 24 }]}>フォルダ・メモ一覧</Text>
+              <Text style={[styles.settingsSubtitle, { paddingHorizontal: 24 }]}>タップするとその場所へ移動します</Text>
 
-              <View style={{ width: '100%', alignItems: 'center', marginBottom: 24 }}>
-                <Text style={{ fontSize: 36, fontWeight: '700', color: THEME_COLORS.blue, marginBottom: 16 }}>
-                  {dragDelaySec.toFixed(1)}<Text style={{ fontSize: 16, color: THEME_COLORS.textSecondary }}> 秒</Text>
-                </Text>
-
-                <Slider
-                  style={{ width: '100%', height: 40 }}
-                  minimumValue={0.1}
-                  maximumValue={3.0}
-                  step={0.1}
-                  value={dragDelaySec}
-                  onValueChange={(val) => setDragDelaySec(val)}
-                  onSlidingComplete={(val) => changeDragDelay(val)}
-                  minimumTrackTintColor={THEME_COLORS.blue}
-                  maximumTrackTintColor={'#D1D5DB'}
-                  thumbTintColor={Platform.OS === 'web' ? '#fff' : THEME_COLORS.blue}
-                />
-
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', paddingHorizontal: 12, marginTop: -4 }}>
-                  <Text style={{ color: THEME_COLORS.textSecondary, fontSize: 12 }}>短め (0.1秒)</Text>
-                  <Text style={{ color: THEME_COLORS.textSecondary, fontSize: 12 }}>長め (3.0秒)</Text>
-                </View>
-              </View>
+              <ScrollView style={{ width: '100%', flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }}>
+                {renderTree(null)}
+              </ScrollView>
 
               <TouchableOpacity
-                style={styles.closeSettingsButton}
+                style={[styles.closeSettingsButton, { margin: 24 }]}
                 onPress={() => setIsSettingsOpen(false)}
               >
                 <Text style={styles.closeSettingsText}>閉じる</Text>
               </TouchableOpacity>
-            </TouchableOpacity>
-          </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={isSearchOpen} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.settingsCard, { maxHeight: '80%', paddingHorizontal: 0, paddingBottom: 0 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+                <TextInput
+                  style={{ flex: 1, backgroundColor: '#F3F4F6', borderRadius: 12, padding: 12, fontSize: 16, color: THEME_COLORS.textMain }}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="キーワード検索..."
+                  placeholderTextColor={THEME_COLORS.textSecondary}
+                  autoFocus
+                />
+                <TouchableOpacity onPress={() => { setIsSearchOpen(false); setSearchQuery(''); }} style={{ padding: 12, marginLeft: 8 }}>
+                  <MaterialIcons name="close" size={24} color={THEME_COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={items.filter(item => 
+                  searchQuery.trim() !== '' && 
+                  ((item.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                   (item.text || '').toLowerCase().includes(searchQuery.toLowerCase()))
+                )}
+                keyExtractor={item => item.id}
+                style={{ flex: 1, width: '100%' }}
+                contentContainerStyle={{ padding: 16 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={styles.searchResultItem} onPress={() => jumpToItem(item)}>
+                    <MaterialIcons name={item.type === 'folder' ? 'folder' : 'note'} size={24} color={item.type === 'folder' ? THEME_COLORS.blue : THEME_COLORS.green} style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title || (item.type === 'folder' ? '無題のフォルダ' : '無題のメモ')}</Text>
+                      {item.type === 'note' && !!item.text && (
+                        <Text style={styles.searchResultText} numberOfLines={1}>{item.text}</Text>
+                      )}
+                    </View>
+                    <MaterialIcons name="chevron-right" size={20} color={THEME_COLORS.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  searchQuery.trim() !== '' ? (
+                    <Text style={{ textAlign: 'center', marginTop: 40, color: THEME_COLORS.textSecondary }}>見つかりませんでした</Text>
+                  ) : (
+                    <Text style={{ textAlign: 'center', marginTop: 40, color: THEME_COLORS.textSecondary }}>キーワードを入力してください</Text>
+                  )
+                }
+              />
+            </View>
+          </View>
         </Modal>
 
       </KeyboardAvoidingView>
@@ -975,6 +1320,7 @@ const styles = StyleSheet.create({
 
   actionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     marginTop: 20,
     gap: 12
   },
@@ -1163,5 +1509,55 @@ const styles = StyleSheet.create({
   moveExecuteText: {
     color: '#FFFFFF',
     fontWeight: '700'
+  },
+  searchFabWrapper: {
+    position: 'absolute',
+    bottom: 24,
+    left: 24,
+    zIndex: 11
+  },
+  searchFab: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: THEME_COLORS.blue,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: THEME_COLORS.blue,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  treeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingRight: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6'
+  },
+  treeItemText: {
+    fontSize: 16,
+    color: THEME_COLORS.textMain,
+    flex: 1
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6'
+  },
+  searchResultTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: THEME_COLORS.textMain,
+    marginBottom: 4
+  },
+  searchResultText: {
+    fontSize: 14,
+    color: THEME_COLORS.textSecondary
   }
 });
+
