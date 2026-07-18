@@ -488,22 +488,12 @@ export default function MemoApp() {
     
     setIsSummarizing(id);
     try {
-      const apiKey = 'AIzaSyAwuu0TQZc4qgLUF5s5_rnC6kp9UFhIpx8';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-      
-      const prompt = `あなたは優秀なアシスタントです。ユーザーが作成したメモの内容を読み解き、最も重要なポイントを的確に抽出してください。\n\n【要件】\n1. 以下のメモ内容を、必ず「3行の箇条書き（箇条書き記号：- ）」で要約してください。\n2. 箇条書き1行あたりの文字数は、スマートフォンの画面で読みやすいように短く（おおむね30文字以内）簡潔にまとめてください。\n3. 出力は要約された箇条書きのテキストのみとし、挨拶、前置き、補足説明などは一切含めないでください。\n\n【メモ内容】\n${text}`;
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        })
+      const { data, error } = await supabase.functions.invoke('summarize', {
+        body: { text },
       });
 
-      if (!response.ok) throw new Error('API Error');
-      const data = await response.json();
-      const summary = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (error) throw error;
+      const summary = data?.summary;
       
       if (summary) {
         setItems(prev => {
