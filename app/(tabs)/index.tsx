@@ -477,6 +477,55 @@ export default function MemoApp() {
     setMovingItemIds([]);
   };
 
+  const [isSummarizing, setIsSummarizing] = useState<string | null>(null);
+
+  const handleSummarize = async (id: string, text: string) => {
+    if (!text || text.trim() === '') {
+      if (Platform.OS === 'web') window.alert("メモが空です");
+      else Alert.alert("エラー", "メモが空です");
+      return;
+    }
+    
+    setIsSummarizing(id);
+    try {
+      const apiKey = 'AIzaSyAwuu0TQZc4qgLUF5s5_rnC6kp9UFhIpx8';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      
+      const prompt = `あなたは優秀なアシスタントです。ユーザーが作成したメモの内容を読み解き、最も重要なポイントを的確に抽出してください。\n\n【要件】\n1. 以下のメモ内容を、必ず「3行の箇条書き（箇条書き記号：- ）」で要約してください。\n2. 箇条書き1行あたりの文字数は、スマートフォンの画面で読みやすいように短く（おおむね30文字以内）簡潔にまとめてください。\n3. 出力は要約された箇条書きのテキストのみとし、挨拶、前置き、補足説明などは一切含めないでください。\n\n【メモ内容】\n${text}`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        })
+      });
+
+      if (!response.ok) throw new Error('API Error');
+      const data = await response.json();
+      const summary = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (summary) {
+        setItems(prev => {
+          pushHistory(prev);
+          return prev.map(item => {
+            if (item.id === id) {
+              const newText = `[AI要約]\n${summary.trim()}\n\n---\n${item.text}`;
+              return { ...item, text: newText };
+            }
+            return item;
+          });
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      if (Platform.OS === 'web') window.alert("要約に失敗しました");
+      else Alert.alert("エラー", "要約に失敗しました");
+    } finally {
+      setIsSummarizing(null);
+    }
+  };
+
   const isChildOfMovingItems = (targetParentId: string | null): boolean => {
     if (targetParentId === null) return false;
     if (movingItemIds.includes(targetParentId)) return true;
@@ -836,6 +885,20 @@ export default function MemoApp() {
                   <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
                   <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
                     {item.fileName ? "ファイル変更" : "ファイル"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.chipButton, { backgroundColor: 'rgba(52, 199, 89, 0.1)' }]} 
+                  onPress={() => !isSelectMode && handleSummarize(item.id, item.text)} 
+                  disabled={isThisItemMoving || isSummarizing === item.id}
+                >
+                  {isSummarizing === item.id ? (
+                    <ActivityIndicator size="small" color={THEME_COLORS.green} style={{ width: 18, height: 18 }} />
+                  ) : (
+                    <MaterialIcons name="auto-awesome" size={18} color={THEME_COLORS.green} />
+                  )}
+                  <Text style={[styles.chipText, { color: THEME_COLORS.green }]}>
+                    {isSummarizing === item.id ? "要約中..." : "AI要約"}
                   </Text>
                 </TouchableOpacity>
                 {!isSelectMode && (
@@ -1267,6 +1330,7 @@ const styles = StyleSheet.create({
 
   actionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     marginTop: 20,
     gap: 12
   },
