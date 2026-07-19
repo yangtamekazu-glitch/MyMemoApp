@@ -496,7 +496,7 @@ export default function MemoApp() {
 
         // Base64エンコードして取得
         const base64Audio = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: 'base64',
         });
 
         setIsSummarizing(id);
