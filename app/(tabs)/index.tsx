@@ -33,6 +33,8 @@ const mapFromDB = (row: any): Item => ({
 
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { Stack } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
@@ -478,6 +480,75 @@ export default function MemoApp() {
   };
 
   const [isSummarizing, setIsSummarizing] = useState<string | null>(null);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recordingItemId, setRecordingItemId] = useState<string | null>(null);
+
+  const handleRecord = async (id: string) => {
+    try {
+      if (recording && recordingItemId === id) {
+        // 録音停止＆送信
+        setRecordingItemId(null);
+        setRecording(null);
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        
+        if (!uri) return;
+
+        // Base64エンコードして取得
+        const base64Audio = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setIsSummarizing(id);
+        
+        const { data, error } = await supabase.functions.invoke('transcribe', {
+          body: {
+            audio: base64Audio,
+            mimeType: Platform.OS === 'ios' ? 'audio/m4a' : 'audio/m4a' // expo-av records in m4a by default
+          },
+        });
+
+        if (error) throw error;
+        const transcript = data?.transcript;
+
+        if (transcript) {
+          setItems(prev => {
+            pushHistory(prev);
+            return prev.map(item => {
+              if (item.id === id) {
+                const newText = item.text ? `${item.text}\n[音声入力: ${transcript.trim()}]` : `[音声入力: ${transcript.trim()}]`;
+                return { ...item, text: newText };
+              }
+              return item;
+            });
+          });
+        }
+      } else {
+        // 録音開始
+        const permission = await Audio.requestPermissionsAsync();
+        if (permission.status === 'granted') {
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: true,
+            playsInSilentModeIOS: true,
+          });
+          const { recording: newRecording } = await Audio.Recording.createAsync(
+            Audio.RecordingOptionsPresets.HIGH_QUALITY
+          );
+          setRecording(newRecording);
+          setRecordingItemId(id);
+        } else {
+          Alert.alert("エラー", "マイクへのアクセスが許可されていません");
+        }
+      }
+    } catch (e: any) {
+      console.error("Recording/Transcription Error:", e);
+      const errMsg = e.message || "文字起こしに失敗しました";
+      if (Platform.OS === 'web') window.alert(`エラー: ${errMsg}`);
+      else Alert.alert("エラー", `文字起こしに失敗しました: ${errMsg}`);
+    } finally {
+      setIsSummarizing(null);
+    }
+  };
 
   const handleSummarize = async (id: string, text: string) => {
     if (!text || text.trim() === '') {
@@ -507,10 +578,11 @@ export default function MemoApp() {
           });
         });
       }
-    } catch (e) {
-      console.error(e);
-      if (Platform.OS === 'web') window.alert("要約に失敗しました");
-      else Alert.alert("エラー", "要約に失敗しました");
+    } catch (e: any) {
+      console.error("Summarize Error:", e);
+      const errMsg = e.message || "要約に失敗しました";
+      if (Platform.OS === 'web') window.alert(`エラー: ${errMsg}`);
+      else Alert.alert("エラー", `要約に失敗しました: ${errMsg}`);
     } finally {
       setIsSummarizing(null);
     }
@@ -875,6 +947,20 @@ export default function MemoApp() {
                   <MaterialIcons name="attach-file" size={18} color={item.fileName ? THEME_COLORS.blue : THEME_COLORS.textSecondary} />
                   <Text style={[styles.chipText, item.fileName && { color: THEME_COLORS.blue }]}>
                     {item.fileName ? "ファイル変更" : "ファイル"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.chipButton, recordingItemId === item.id && { backgroundColor: 'rgba(255, 59, 48, 0.1)' }]}
+                  onPress={() => !isSelectMode && handleRecord(item.id)}
+                  disabled={isThisItemMoving || (recording !== null && recordingItemId !== item.id) || isSummarizing === item.id}
+                >
+                  {recordingItemId === item.id ? (
+                    <MaterialIcons name="stop" size={18} color={THEME_COLORS.red} />
+                  ) : (
+                    <MaterialIcons name="mic" size={18} color={recording !== null ? THEME_COLORS.textSecondary : THEME_COLORS.blue} />
+                  )}
+                  <Text style={[styles.chipText, { color: recordingItemId === item.id ? THEME_COLORS.red : (recording !== null ? THEME_COLORS.textSecondary : THEME_COLORS.blue) }]}>
+                    {recordingItemId === item.id ? "停止" : "音声"}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
