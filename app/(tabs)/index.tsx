@@ -494,10 +494,24 @@ export default function MemoApp() {
         
         if (!uri) return;
 
-        // Base64エンコードして取得
-        const base64Audio = await FileSystem.readAsStringAsync(uri, {
-          encoding: 'base64',
-        });
+        let base64Audio = '';
+        if (Platform.OS === 'web') {
+          const response = await fetch(uri);
+          const blob = await response.blob();
+          base64Audio = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const dataUrl = reader.result as string;
+              resolve(dataUrl.split(',')[1]);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } else {
+          base64Audio = await FileSystem.readAsStringAsync(uri, {
+            encoding: 'base64',
+          });
+        }
 
         setIsSummarizing(id);
         
